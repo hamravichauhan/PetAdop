@@ -4,27 +4,43 @@ import { User } from "../models/User.js";
 
 const useCookie = (process.env.USE_REFRESH_COOKIE || "false").toLowerCase() === "true";
 
-// Helper to optionally set refresh cookie
+/* -------------------- helpers -------------------- */
 function maybeSetRefreshCookie(res, refreshToken) {
   if (!useCookie) return;
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7d
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   });
 }
 
+function buildDefaultAvatar({ username = "", fullname = "" }) {
+  const seed = (username || fullname || "friend").trim().replace(/\s+/g, "-").toLowerCase();
+  return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(seed)}&backgroundType=gradientLinear`;
+}
+
+/* -------------------- controllers -------------------- */
+
 export const register = async (req, res, next) => {
   try {
-    let { username, fullname, email, password, avatar } = req.body;
+    let { username, fullname, email, password, avatar } = req.body || {};
 
     // Normalize
     username = (username || "").trim();
     fullname = (fullname || "").trim();
     email = (email || "").trim().toLowerCase();
+    avatar = (avatar || "").trim();
 
-    // Prevent duplicates (case-insensitive username)
+    // Basic validation (schema will enforce too)
+    if (!username || !fullname || !email || !password) {
+      return res.status(400).json({ success: false, message: "username, fullname, email and password are required" });
+    }
+    if (password.length < 8 || password.length > 16) {
+      return res.status(400).json({ success: false, message: "Password must be 8–16 characters" });
+    }
+
+    // Ensure unique email/username (case-insensitive username)
     const exists = await User.findOne({
       $or: [{ email }, { username: new RegExp(`^${username}$`, "i") }],
     });
@@ -32,20 +48,29 @@ export const register = async (req, res, next) => {
       return res.status(409).json({ success: false, message: "Email or username already in use" });
     }
 
-    const user = await User.create({ username, fullname, email, password, avatar });
+    // Default avatar if not provided
+    if (!avatar) {
+      avatar = buildDefaultAvatar({ username, fullname });
+    }
 
-    // Public view (password hidden via select:false in model)
-    const publicUser = await User.findById(user._id);
+    const created = await User.create({ username, fullname, email, password, avatar });
+
+    // Public user (no password)
+    const user = await User.findById(created._id);
 
     // Tokens
-    const accessToken = publicUser.generateAccessToken();
-    const refreshToken = publicUser.generateRefreshToken();
+    const accessToken = user.generateAccessToken();
+    const refreshToken = user.generateRefreshToken();
     maybeSetRefreshCookie(res, refreshToken);
 
     return res.status(201).json({
       success: true,
-      data: publicUser,
-      tokens: { accessToken, refreshToken: useCookie ? undefined : refreshToken },
+      user,                     // top-level for frontend convenience
+      accessToken,              // top-level for frontend convenience
+      tokens: {                 // keep nested structure for compatibility
+        accessToken,
+        refreshToken: useCookie ? undefined : refreshToken,
+      },
     });
   } catch (e) {
     if (e?.code === 11000) {
@@ -57,10 +82,18 @@ export const register = async (req, res, next) => {
 
 export const login = async (req, res, next) => {
   try {
-    let { email, password } = req.body;
-    email = (email || "").trim().toLowerCase();
+    // Accept email/username/identifier
+    let { email, username, identifier, password } = req.body || {};
+    email = (email || (identifier?.includes("@") ? identifier : "") || "").trim().toLowerCase();
+    username = (username || (!email && identifier ? identifier : "") || "").trim();
 
-    const userWithPassword = await User.findOne({ email }).select("+password");
+    if (!password || (!email && !username)) {
+      return res.status(400).json({ success: false, message: "Provide email or username and password" });
+    }
+
+    // Query by email or username; MUST select password because schema has select:false
+    const query = email ? { email } : { username: new RegExp(`^${username}$`, "i") };
+    const userWithPassword = await User.findOne(query).select("+password");
     if (!userWithPassword) {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
@@ -70,15 +103,21 @@ export const login = async (req, res, next) => {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
+    // fetch clean public view
     const user = await User.findById(userWithPassword._id);
+
     const accessToken = user.generateAccessToken();
     const refreshToken = user.generateRefreshToken();
     maybeSetRefreshCookie(res, refreshToken);
 
     return res.json({
       success: true,
-      data: user,
-      tokens: { accessToken, refreshToken: useCookie ? undefined : refreshToken },
+      user,                     // top-level
+      accessToken,              // top-level
+      tokens: {
+        accessToken,
+        refreshToken: useCookie ? undefined : refreshToken,
+      },
     });
   } catch (e) {
     next(e);
@@ -106,7 +145,13 @@ export const refresh = async (req, res, next) => {
     if (!user) return res.status(401).json({ success: false, message: "User not found" });
 
     const accessToken = user.generateAccessToken();
-    return res.json({ success: true, accessToken });
+
+    return res.json({
+      success: true,
+      accessToken,
+      // keep old shape too if you want:
+      tokens: { accessToken },
+    });
   } catch (e) {
     next(e);
   }

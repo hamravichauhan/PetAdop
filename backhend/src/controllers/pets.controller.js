@@ -1,7 +1,8 @@
-import Pet from "../models/Pet.js";
+// src/controllers/pets.controller.js
+import { Pet } from "../models/Pet.js";
 import { httpError } from "../middleware/error.js";
 
-/** helpers **/
+/* ----------------------------- helpers ----------------------------- */
 
 function isAdmin(user) {
   return user?.role === "superadmin" || user?.role === "admin";
@@ -10,7 +11,8 @@ const getUserId = (req) => req?.user?._id || req?.user?.id;
 
 function parseBool(v) {
   if (v === true || v === false) return v;
-  if (typeof v === "string") return v.toLowerCase() === "true";
+  if (typeof v === "string") return v.toLowerCase() === "true" || v === "1";
+  if (typeof v === "number") return v === 1;
   return undefined;
 }
 
@@ -20,20 +22,38 @@ function extractUploadedPhotoPaths(req) {
 }
 
 function buildTextFilter(q) {
-  if (!q) return {};
+  if (!q || typeof q !== "string") return {};
+  const query = q.trim();
+  if (!query) return {};
   return {
     $or: [
-      { $text: { $search: q } },
-      { name: { $regex: q, $options: "i" } },
-      { breed: { $regex: q, $options: "i" } },
-      { description: { $regex: q, $options: "i" } },
-      { city: { $regex: q, $options: "i" } },
-      { otherSpecies: { $regex: q, $options: "i" } },
+      { $text: { $search: query } },
+      { name: { $regex: query, $options: "i" } },
+      { breed: { $regex: query, $options: "i" } },
+      { description: { $regex: query, $options: "i" } },
+      { city: { $regex: query, $options: "i" } },
+      { otherSpecies: { $regex: query, $options: "i" } },
     ],
   };
 }
 
-/** Controllers **/
+const ALLOWED_STATUSES = new Set(["available", "reserved", "adopted"]);
+const ALLOWED_SORTS = new Set([
+  "createdAt",
+  "-createdAt",
+  "ageMonths",
+  "-ageMonths",
+  "name",
+  "-name",
+]);
+
+function normalizeSort(sort) {
+  if (!sort || typeof sort !== "string") return "-createdAt";
+  const s = sort.trim();
+  return ALLOWED_SORTS.has(s) ? s : "-createdAt";
+}
+
+/* ---------------------------- controllers --------------------------- */
 
 // GET /api/pets
 export async function listPets(req, res, next) {
@@ -42,7 +62,7 @@ export async function listPets(req, res, next) {
       q,
       species,
       otherSpecies,
-      speciesOther, // legacy
+      speciesOther, // legacy alias
       gender,
       size,
       city,
@@ -53,7 +73,7 @@ export async function listPets(req, res, next) {
       minAge,
       maxAge,
       mine,
-      sort = "-createdAt",
+      sort,
       page = 1,
       limit = 12,
     } = req.query;
@@ -61,13 +81,19 @@ export async function listPets(req, res, next) {
     const filter = {};
 
     if (species) filter.species = species;
+
     const normalizedOther = otherSpecies ?? speciesOther;
-    if (normalizedOther) filter.otherSpecies = { $regex: String(normalizedOther).trim(), $options: "i" };
+    if (normalizedOther) {
+      filter.otherSpecies = { $regex: String(normalizedOther).trim(), $options: "i" };
+    }
 
     if (gender) filter.gender = gender;
     if (size) filter.size = size;
     if (city) filter.city = { $regex: String(city).trim(), $options: "i" };
-    if (status) filter.status = status;
+
+    if (status && ALLOWED_STATUSES.has(String(status))) {
+      filter.status = status;
+    }
 
     const v1 = parseBool(vaccinated);
     if (v1 !== undefined) filter.vaccinated = v1;
@@ -81,26 +107,63 @@ export async function listPets(req, res, next) {
     if (maxAge !== undefined) age.$lte = Number(maxAge);
     if (Object.keys(age).length) filter.ageMonths = age;
 
-    if (mine === "1") {
+    // mine filter (requires auth)
+    const mineFlag = parseBool(mine);
+    if (mineFlag) {
       const meId = getUserId(req);
-      if (meId) filter.listedBy = meId;
+      if (!meId) return next(httpError(401, "Login required to view your listings"));
+      filter.listedBy = meId;
     }
 
     const textFilter = buildTextFilter(q);
     const finalFilter = Object.keys(textFilter).length ? { $and: [filter, textFilter] } : filter;
 
-    const pageNum = Number(page) || 1;
-    const lim = Number(limit) || 12;
+    const pageNum = Math.max(1, Number(page) || 1);
+    const lim = Math.min(50, Math.max(1, Number(limit) || 12));
     const skip = (pageNum - 1) * lim;
+    const sortBy = normalizeSort(sort);
 
     const [items, total] = await Promise.all([
-      Pet.find(finalFilter).sort(sort).skip(skip).limit(lim),
+      Pet.find(finalFilter).sort(sortBy).skip(skip).limit(lim),
       Pet.countDocuments(finalFilter),
     ]);
 
     res.json({
       success: true,
-      meta: { total, page: pageNum, limit: lim, hasNext: skip + items.length < total },
+      meta: { total, page: pageNum, limit: lim, hasNext: skip + items.length < total, sort: sortBy },
+      data: items,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// GET /api/pets/mine  (auth required)
+export async function listMyPets(req, res, next) {
+  try {
+    const meId = getUserId(req);
+    if (!meId) return next(httpError(401, "Login required"));
+
+    const { status, page = 1, limit = 12, sort } = req.query;
+
+    const filter = { listedBy: meId };
+    if (status && ALLOWED_STATUSES.has(String(status))) {
+      filter.status = status;
+    }
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const lim = Math.min(50, Math.max(1, Number(limit) || 12));
+    const skip = (pageNum - 1) * lim;
+    const sortBy = normalizeSort(sort);
+
+    const [items, total] = await Promise.all([
+      Pet.find(filter).sort(sortBy).skip(skip).limit(lim),
+      Pet.countDocuments(filter),
+    ]);
+
+    res.json({
+      success: true,
+      meta: { total, page: pageNum, limit: lim, hasNext: skip + items.length < total, sort: sortBy },
       data: items,
     });
   } catch (err) {
@@ -120,9 +183,12 @@ export async function getPetById(req, res, next) {
   }
 }
 
-// POST /api/pets
+// POST /api/pets  (auth required)
 export async function createPet(req, res, next) {
   try {
+    const meId = getUserId(req);
+    if (!meId) return next(httpError(401, "Login required"));
+
     const body = { ...req.body };
 
     // Normalize legacy key
@@ -141,12 +207,13 @@ export async function createPet(req, res, next) {
 
     // photos: merge JSON URLs + uploaded files
     const uploaded = extractUploadedPhotoPaths(req);
-    const jsonPhotos = Array.isArray(body.photos) ? body.photos : [];
+    const jsonPhotos = Array.isArray(body.photos) ? body.photos : (body.photos ? [body.photos] : []);
     body.photos = [...jsonPhotos, ...uploaded];
 
     const doc = await Pet.create({
       ...body,
-      listedBy: getUserId(req),
+      listedBy: meId,
+      status: body.status && ALLOWED_STATUSES.has(body.status) ? body.status : "available",
     });
 
     res.status(201).json({ success: true, data: doc });
@@ -155,7 +222,7 @@ export async function createPet(req, res, next) {
   }
 }
 
-// PATCH /api/pets/:id
+// PATCH /api/pets/:id  (auth required)
 export async function updatePetById(req, res, next) {
   try {
     const { id } = req.params;
@@ -172,12 +239,16 @@ export async function updatePetById(req, res, next) {
     body.otherSpecies = body.otherSpecies ?? body.speciesOther;
     delete body.speciesOther;
 
+    // Coerce types
     ["vaccinated", "dewormed", "sterilized"].forEach((k) => {
       if (body[k] !== undefined) body[k] = parseBool(body[k]);
     });
     if (body.ageMonths !== undefined) body.ageMonths = Number(body.ageMonths);
 
-    if (body.species === "other" && (body.otherSpecies ?? pet.otherSpecies) === undefined) {
+    if (
+      body.species === "other" &&
+      (body.otherSpecies ?? pet.otherSpecies) === undefined
+    ) {
       return next(httpError(400, "otherSpecies is required when species is 'other'"));
     }
 
@@ -187,14 +258,30 @@ export async function updatePetById(req, res, next) {
       body.photos = Array.isArray(pet.photos) ? [...pet.photos, ...uploaded] : uploaded;
     }
 
+    // Whitelist updatable fields
     const allowed = [
-      "name", "species", "otherSpecies", "breed", "gender", "ageMonths",
-      "size", "city", "vaccinated", "dewormed", "sterilized",
-      "description", "photos", "status"
+      "name",
+      "species",
+      "otherSpecies",
+      "breed",
+      "gender",
+      "ageMonths",
+      "size",
+      "city",
+      "vaccinated",
+      "dewormed",
+      "sterilized",
+      "description",
+      "photos",
+      "status",
     ];
     const updates = {};
     for (const k of allowed) {
       if (body[k] !== undefined) updates[k] = body[k];
+    }
+
+    if (updates.status && !ALLOWED_STATUSES.has(updates.status)) {
+      return next(httpError(400, "Invalid status"));
     }
 
     const updated = await Pet.findByIdAndUpdate(id, updates, { new: true });
@@ -204,7 +291,7 @@ export async function updatePetById(req, res, next) {
   }
 }
 
-// PATCH /api/pets/:id/status
+// PATCH /api/pets/:id/status  (auth required)
 export async function updatePetStatus(req, res, next) {
   try {
     const { id } = req.params;
@@ -217,7 +304,7 @@ export async function updatePetStatus(req, res, next) {
     const owner = String(pet.listedBy) === String(meId);
     if (!owner && !isAdmin(req.user)) return next(httpError(403, "Not allowed"));
 
-    if (!["available", "reserved", "adopted"].includes(status)) {
+    if (!ALLOWED_STATUSES.has(String(status))) {
       return next(httpError(400, "Invalid status"));
     }
 
@@ -230,7 +317,7 @@ export async function updatePetStatus(req, res, next) {
   }
 }
 
-// DELETE /api/pets/:id
+// DELETE /api/pets/:id  (auth required)
 export async function deletePetById(req, res, next) {
   try {
     const { id } = req.params;

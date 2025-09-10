@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+/* Fancy scrollbar */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: #22283a; border-radius: 999px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* Card hover */
+.card-hover {
+  @apply transition duration-300 ease-out hover:shadow-soft hover:-translate-y-0.5;
+}

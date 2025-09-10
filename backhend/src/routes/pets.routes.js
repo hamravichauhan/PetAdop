@@ -1,7 +1,9 @@
+// src/routes/pets.routes.js
 import { Router } from "express";
 import { auth } from "../middleware/auth.js";
 import {
   listPets,
+  listMyPets, // ✅ added
   getPetById,
   createPet,
   updatePetById,
@@ -18,8 +20,10 @@ import {
 import { handleValidation } from "../middleware/validate.js";
 import { upload } from "../middleware/upload.js"; // ✅ import only `upload`
 
-// Derive multipart handler here to avoid named-export drift
+// Multer handler: up to 5 photos in field "photos"
 const uploadPetPhotos = upload.array("photos", 5);
+
+// Normalize legacy key speciesOther -> otherSpecies BEFORE validation
 function normalizeOtherSpecies(req, _res, next) {
   if (req.body && typeof req.body === "object") {
     if (req.body.speciesOther && !req.body.otherSpecies) {
@@ -34,14 +38,46 @@ const router = Router();
 
 /** Public: list & view */
 router.get("/", listPetsQueryValidator, handleValidation, listPets);
+
+// ✅ My listings (must appear BEFORE `/:id`)
+router.get("/mine", auth, listPetsQueryValidator, handleValidation, listMyPets);
+
 router.get("/:id", petIdParamValidator, handleValidation, getPetById);
 
 /** Auth required: create/update/delete (with optional photos upload) */
-router.post("/", auth, uploadPetPhotos, createPetValidator, handleValidation, createPet);
-router.patch("/:id", auth, uploadPetPhotos, petIdParamValidator, updatePetValidator, handleValidation, updatePetById);
+// For create: parse multipart first so validators see body
+router.post(
+  "/",
+  auth,
+  uploadPetPhotos,
+  normalizeOtherSpecies,
+  createPetValidator,
+  handleValidation,
+  createPet
+);
+
+// For update: validate :id early, then parse multipart, then validate body
+router.patch(
+  "/:id",
+  auth,
+  petIdParamValidator,
+  uploadPetPhotos,
+  normalizeOtherSpecies,
+  updatePetValidator,
+  handleValidation,
+  updatePetById
+);
+
 router.delete("/:id", auth, petIdParamValidator, handleValidation, deletePetById);
 
 /** Auth required: status change (available | reserved | adopted) */
-router.patch("/:id/status", auth, updatePetStatusValidator, handleValidation, updatePetStatus);
+router.patch(
+  "/:id/status",
+  auth,
+  petIdParamValidator,
+  updatePetStatusValidator,
+  handleValidation,
+  updatePetStatus
+);
 
 export default router;
