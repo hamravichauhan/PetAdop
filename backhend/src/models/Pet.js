@@ -1,3 +1,4 @@
+// src/models/Pet.js
 import mongoose from "mongoose";
 
 const { Schema } = mongoose;
@@ -100,10 +101,10 @@ const petSchema = new Schema(
       index: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
-// Optional helpful indexes (text search over common fields)
+// Text search index
 petSchema.index({ name: "text", breed: "text", description: "text", city: "text" });
 
 // Virtual for age in years/months
@@ -112,6 +113,11 @@ petSchema.virtual("ageLabel").get(function () {
   const yrs = Math.floor(this.ageMonths / 12);
   const mos = this.ageMonths % 12;
   return mos ? `${yrs}y ${mos}m` : `${yrs}y`;
+});
+
+// ✅ Virtual alias for frontend: ownerId = listedBy
+petSchema.virtual("ownerId").get(function () {
+  return this.listedBy;
 });
 
 export default mongoose.model("Pet", petSchema);

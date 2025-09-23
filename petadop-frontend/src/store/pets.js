@@ -58,7 +58,7 @@ export const usePetsStore = create((set, get) => ({
   async fetchList(params = {}) {
     set({ loading: true });
     try {
-      const resp = await api.get("/api/pets", { params });
+      const resp = await api.get("/pets", { params });
       set({
         list: normalizeList(resp),
         listMeta: readMeta(resp, { sort: params.sort || "-createdAt" }),
@@ -71,7 +71,7 @@ export const usePetsStore = create((set, get) => ({
   /** Featured = a few currently-available pets */
   async fetchFeatured() {
     try {
-      const resp = await api.get("/api/pets", {
+      const resp = await api.get("/pets", {
         params: { status: "available", limit: 6, sort: "-createdAt" },
       });
       set({ featured: normalizeList(resp) });
@@ -84,7 +84,7 @@ export const usePetsStore = create((set, get) => ({
   /** Success stories (adopted) + count (use meta.total from a single call when available) */
   async fetchAdopted() {
     try {
-      const resp = await api.get("/api/pets", {
+      const resp = await api.get("/pets", {
         params: { status: "adopted", limit: 12, sort: "-updatedAt" },
       });
       const adopted = normalizeList(resp);
@@ -100,8 +100,8 @@ export const usePetsStore = create((set, get) => ({
   async fetchCounts() {
     try {
       const [adoptedRes, waitingRes] = await Promise.all([
-        api.get("/api/pets", { params: { status: "adopted", limit: 1 } }),
-        api.get("/api/pets", { params: { status: "available", limit: 1 } }),
+        api.get("/pets", { params: { status: "adopted", limit: 1 } }),
+        api.get("/pets", { params: { status: "available", limit: 1 } }),
       ]);
 
       set({
@@ -117,7 +117,7 @@ export const usePetsStore = create((set, get) => ({
   /** Single pet */
   async fetchOne(id) {
     try {
-      const resp = await api.get(`/api/pets/${id}`);
+      const resp = await api.get(`/pets/${id}`);
       set({ current: resp?.data?.data || resp?.data || null });
     } catch (e) {
       console.error("fetchOne failed", e);
@@ -137,7 +137,7 @@ export const usePetsStore = create((set, get) => ({
         }
       });
 
-      const resp = await api.post("/api/pets", form, {
+      const resp = await api.post("/pets", form, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       const created = resp?.data?.data || null;
@@ -162,7 +162,7 @@ export const usePetsStore = create((set, get) => ({
 
     set({ myListingsLoading: true });
     try {
-      const resp = await api.get("/api/pets/mine", {
+      const resp = await api.get("/pets/mine", {
         params: {
           page,
           limit,

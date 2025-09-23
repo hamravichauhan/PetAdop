@@ -34,7 +34,7 @@ export const useAuthStore = create((set, get) => ({
     try {
       set({ loadingMe: true });
       setToken(token); // ensure header is set
-      const { data } = await api.get("/api/users/me");
+      const { data } = await api.get("/users/me");
       const user = data?.user ?? data ?? null;
       set({ user, isAuthed: !!user });
     } catch {
@@ -56,7 +56,7 @@ export const useAuthStore = create((set, get) => ({
         ? { email: identifier.trim(), password }
         : { username: identifier.trim(), password };
 
-      const { data } = await api.post("/api/auth/login", body);
+      const { data } = await api.post("/auth/login", body);
 
       // Accept either accessToken or token (compat)
       const token =
@@ -90,7 +90,7 @@ export const useAuthStore = create((set, get) => ({
    */
   async register(payload) {
     try {
-      const { data } = await api.post("/api/auth/register", payload);
+      const { data } = await api.post("/auth/register", payload);
 
       const token =
         data?.accessToken ||
@@ -124,7 +124,7 @@ export const useAuthStore = create((set, get) => ({
    */
   async refresh() {
     try {
-      const { data } = await api.post("/api/auth/refresh", {});
+      const { data } = await api.post("/auth/refresh", {});
       const newToken =
         data?.accessToken ||
         data?.token ||
@@ -151,7 +151,7 @@ export const useAuthStore = create((set, get) => ({
   async logout() {
     try {
       // If backend uses cookie for refresh, this clears it
-      await api.post("/api/auth/logout");
+      await api.post("/auth/logout");
     } catch {
       // ignore network errors here
     } finally {

@@ -25,13 +25,13 @@ npm run build && npm run preview
 ## Notes
 
 - Authentication expects your backend to expose:
-  - `POST /api/auth/register` → returns `{ accessToken }` or `{ token }`
-  - `POST /api/auth/login` → returns `{ accessToken }` or `{ token }`
-  - `GET /api/users/me` → returns current user
+  - `POST /auth/register` → returns `{ accessToken }` or `{ token }`
+  - `POST /auth/login` → returns `{ accessToken }` or `{ token }`
+  - `GET /users/me` → returns current user
 - Pets:
-  - `GET /api/pets` with filters (species, city, vaccinated, size, gender)
-  - `GET /api/pets/:id`
-  - `POST /api/pets` with `multipart/form-data` (fields + `photos` files)
+  - `GET /pets` with filters (species, city, vaccinated, size, gender)
+  - `GET /pets/:id`
+  - `POST /pets` with `multipart/form-data` (fields + `photos` files)
 
 ### Styling
 

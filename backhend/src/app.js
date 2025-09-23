@@ -8,7 +8,9 @@ import compression from "compression";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import routes from "./routes/index.js"; // mounts sub-routers (e.g., /pets, /auth, etc.)
+import routes from "./routes/index.js";            // mounts sub-routers (e.g., /pets, /auth, etc.)
+// Optional: add chat HTTP routes if you create them
+// import chatRoutes from "./routes/chat.routes.js";
 
 const app = express();
 
@@ -25,7 +27,7 @@ app.use(
 const devDefaults = ["http://localhost:5173", "http://127.0.0.1:5173"];
 const envList = (process.env.CORS_ORIGIN || "")
   .split(",")
-  .map(s => s.trim())
+  .map((s) => s.trim())
   .filter(Boolean);
 const allowList = envList.length ? envList : devDefaults;
 
@@ -41,8 +43,8 @@ const corsOptions = {
   exposedHeaders: ["Content-Type", "Authorization"],
 };
 
-// ❌ DO NOT use app.options("*", ...) on Express 5
-// app.options("*", cors(corsOptions)); // <-- remove this
+// ❌ Express 5: don’t use app.options("*", ...)
+// app.options("*", cors(corsOptions));
 app.use(cors(corsOptions));
 
 /* ---------------- Body & cookies ---------------------- */
@@ -68,6 +70,9 @@ app.get("/health", (_req, res) =>
 /* ---------------- API routes -------------------------- */
 app.use("/api", routes);
 
+// If/when you add REST for chat history:
+// app.use("/chat", chatRoutes);
+
 // TEMP ping
 app.get("/api/_ping", (_req, res) => res.json({ ok: true, where: "app-api" }));
 
@@ -83,5 +88,9 @@ app.use((err, _req, res, next) => {
   }
   return next(err);
 });
+
+/* ------- Export CORS origins for Socket.IO ------------- */
+// Reuse this in server.js so WS and HTTP allow the same origins.
+export const SOCKET_CORS = { origin: allowList, credentials: true };
 
 export default app;

@@ -1,5 +1,5 @@
 // src/controllers/pets.controller.js
-import { Pet } from "../models/Pet.js";
+import Pet from "../models/Pet.js";
 import { httpError } from "../middleware/error.js";
 
 /* ----------------------------- helpers ----------------------------- */
@@ -53,9 +53,16 @@ function normalizeSort(sort) {
   return ALLOWED_SORTS.has(s) ? s : "-createdAt";
 }
 
+function withOwnerId(doc) {
+  if (!doc) return doc;
+  const obj = doc.toObject ? doc.toObject() : doc;
+  obj.ownerId = obj.listedBy;
+  return obj;
+}
+
 /* ---------------------------- controllers --------------------------- */
 
-// GET /api/pets
+// GET /pets
 export async function listPets(req, res, next) {
   try {
     const {
@@ -131,14 +138,14 @@ export async function listPets(req, res, next) {
     res.json({
       success: true,
       meta: { total, page: pageNum, limit: lim, hasNext: skip + items.length < total, sort: sortBy },
-      data: items,
+      data: items.map(withOwnerId),
     });
   } catch (err) {
     next(err);
   }
 }
 
-// GET /api/pets/mine  (auth required)
+// GET /pets/mine  (auth required)
 export async function listMyPets(req, res, next) {
   try {
     const meId = getUserId(req);
@@ -164,26 +171,26 @@ export async function listMyPets(req, res, next) {
     res.json({
       success: true,
       meta: { total, page: pageNum, limit: lim, hasNext: skip + items.length < total, sort: sortBy },
-      data: items,
+      data: items.map(withOwnerId),
     });
   } catch (err) {
     next(err);
   }
 }
 
-// GET /api/pets/:id
+// GET /pets/:id
 export async function getPetById(req, res, next) {
   try {
     const { id } = req.params;
     const pet = await Pet.findById(id);
     if (!pet) return next(httpError(404, "Pet not found"));
-    res.json({ success: true, data: pet });
+    res.json({ success: true, data: withOwnerId(pet) });
   } catch (err) {
     next(err);
   }
 }
 
-// POST /api/pets  (auth required)
+// POST /pets  (auth required)
 export async function createPet(req, res, next) {
   try {
     const meId = getUserId(req);
@@ -216,13 +223,13 @@ export async function createPet(req, res, next) {
       status: body.status && ALLOWED_STATUSES.has(body.status) ? body.status : "available",
     });
 
-    res.status(201).json({ success: true, data: doc });
+    res.status(201).json({ success: true, data: withOwnerId(doc) });
   } catch (err) {
     next(err);
   }
 }
 
-// PATCH /api/pets/:id  (auth required)
+// PATCH /pets/:id  (auth required)
 export async function updatePetById(req, res, next) {
   try {
     const { id } = req.params;
@@ -285,13 +292,13 @@ export async function updatePetById(req, res, next) {
     }
 
     const updated = await Pet.findByIdAndUpdate(id, updates, { new: true });
-    res.json({ success: true, data: updated });
+    res.json({ success: true, data: withOwnerId(updated) });
   } catch (err) {
     next(err);
   }
 }
 
-// PATCH /api/pets/:id/status  (auth required)
+// PATCH /pets/:id/status  (auth required)
 export async function updatePetStatus(req, res, next) {
   try {
     const { id } = req.params;
@@ -317,7 +324,7 @@ export async function updatePetStatus(req, res, next) {
   }
 }
 
-// DELETE /api/pets/:id  (auth required)
+// DELETE /pets/:id  (auth required)
 export async function deletePetById(req, res, next) {
   try {
     const { id } = req.params;

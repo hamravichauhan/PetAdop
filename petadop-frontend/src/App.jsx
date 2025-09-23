@@ -18,6 +18,8 @@ import NotFound from "./pages/NotFound.jsx";
 import RequireAuth from "./components/layout/RequireAuth.jsx";
 import { useAuthStore } from "./store/auth.js";
 
+import ChatPage from "./pages/ChatPage.jsx";
+
 const PageWrapper = ({ children }) => (
   <motion.main
     className="min-h-[calc(100vh-5rem)]"
@@ -69,6 +71,7 @@ export default function App() {
               </PageWrapper>
             }
           />
+          <Route path="/chat/:id" element={<ChatPage />} />
 
           {/* Protected routes */}
           <Route
