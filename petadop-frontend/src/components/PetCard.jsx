@@ -35,9 +35,13 @@ export default function PetCard({ pet }) {
             alt={pet?.name}
             className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
             loading="lazy"
+            onError={(e) => {
+              // Fallback if image fails to load
+              e.target.src = `https://picsum.photos/seed/${pet?._id}/600/400`;
+            }}
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
 
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
           {/* top badges */}
           <div className="absolute left-3 top-3 flex gap-2">
             <span className="rounded-full bg-green-500/90 px-2 py-0.5 text-xs font-semibold text-white">

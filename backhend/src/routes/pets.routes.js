@@ -34,6 +34,16 @@ function normalizeOtherSpecies(req, _res, next) {
   next();
 }
 
+// NEW: sanitize optional contactPhone to digits-only BEFORE validation
+function normalizeContactPhone(req, _res, next) {
+  if (req.body && typeof req.body === "object" && req.body.contactPhone !== undefined) {
+    const digits = String(req.body.contactPhone).replace(/\D/g, "");
+    // if empty after stripping, set to undefined so validator can treat as optional
+    req.body.contactPhone = digits || undefined;
+  }
+  next();
+}
+
 const router = Router();
 
 /** Public: list & view */
@@ -51,6 +61,7 @@ router.post(
   auth,
   uploadPetPhotos,
   normalizeOtherSpecies,
+  normalizeContactPhone,        // ✅ sanitize contactPhone
   createPetValidator,
   handleValidation,
   createPet
@@ -63,6 +74,7 @@ router.patch(
   petIdParamValidator,
   uploadPetPhotos,
   normalizeOtherSpecies,
+  normalizeContactPhone,        // ✅ sanitize contactPhone
   updatePetValidator,
   handleValidation,
   updatePetById

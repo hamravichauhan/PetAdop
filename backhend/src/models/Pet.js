@@ -100,6 +100,17 @@ const petSchema = new Schema(
       required: true,
       index: true,
     },
+
+    // NEW: Optional per-pet phone override. If present, use this for WhatsApp.
+    contactPhone: {
+      type: String,
+      trim: true,
+      validate: {
+        validator: (v) => !v || /^[0-9]{10,15}$/.test(v),
+        message: "contactPhone must be 10-15 digits (numbers only)",
+      },
+      index: true,
+    },
   },
   { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );

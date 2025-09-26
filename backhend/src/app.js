@@ -8,7 +8,7 @@ import compression from "compression";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import routes from "./routes/index.js";            // mounts sub-routers (e.g., /pets, /auth, etc.)
+import routes from "./routes/index.js"; // mounts sub-routers (e.g., /pets, /auth, etc.)
 // Optional: add chat HTTP routes if you create them
 // import chatRoutes from "./routes/chat.routes.js";
 
@@ -48,7 +48,15 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 /* ---------------- Body & cookies ---------------------- */
-app.use(express.json({ limit: "16kb" }));
+// Helpful JSON parse error surface
+app.use(express.json({ limit: "16kb", strict: true }));
+app.use((err, _req, res, next) => {
+  if (err?.type === "entity.parse.failed") {
+    return res.status(400).json({ success: false, message: "Invalid JSON body" });
+  }
+  next(err);
+});
+
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 app.use(cookieParser());
 
@@ -67,14 +75,14 @@ app.get("/health", (_req, res) =>
   res.json({ status: "ok", uptime: process.uptime() })
 );
 
+// Small internal ping for quick checks
+app.get("/api/_ping", (_req, res) => res.json({ ok: true, where: "app-api" }));
+
 /* ---------------- API routes -------------------------- */
 app.use("/api", routes);
 
 // If/when you add REST for chat history:
 // app.use("/chat", chatRoutes);
-
-// TEMP ping
-app.get("/api/_ping", (_req, res) => res.json({ ok: true, where: "app-api" }));
 
 /* ---------------- 404 --------------------------------- */
 app.use((req, res) =>
@@ -87,6 +95,29 @@ app.use((err, _req, res, next) => {
     return res.status(403).json({ success: false, message: err.message });
   }
   return next(err);
+});
+
+/* --------------- Global error handler ----------------- */
+// Works with your httpError helper: next(httpError(status, msg))
+app.use((err, _req, res, _next) => {
+  const status =
+    err?.status ||
+    err?.statusCode ||
+    (err?.name === "ValidationError" ? 400 : 500);
+
+  const payload = {
+    success: false,
+    message: err?.message || "Internal Server Error",
+  };
+
+  // Include details in non-production for easier debugging
+  if (process.env.NODE_ENV !== "production") {
+    payload.stack = err?.stack;
+    // Surface express-validator errors if present
+    if (err?.errors) payload.errors = err.errors;
+  }
+
+  res.status(status).json(payload);
 });
 
 /* ------- Export CORS origins for Socket.IO ------------- */

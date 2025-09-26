@@ -50,6 +50,15 @@ const userSchema = new mongoose.Schema(
       maxlength: 16,
       select: false,
     },
+    phone: {
+      type: String,
+      required: true,
+      trim: true,
+      validate: {
+        validator: (v) => /^[0-9]{10,15}$/.test(v),
+        message: "Phone must be 10-15 digits (numbers only)",
+      },
+    },
     // OLX-style: everyone is "user", only rare "superadmin"
     role: {
       type: String,

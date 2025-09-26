@@ -1,3 +1,4 @@
+// src/pages/PetDetails.jsx
 import React from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { usePetsStore } from "../store/pets.js";
@@ -5,8 +6,7 @@ import { Card, CardContent } from "../components/ui/Card.jsx";
 import { useAuthStore } from "../store/auth.js";
 import Badge from "../components/ui/Badge.jsx";
 import Skeleton from "../components/ui/Skeleton.jsx";
-// ⬇️ use the API wrapper that has baseURL=/api
-import api from "../utils/api.js";
+import api from "../utils/api.js"; // ✅ already has baseURL=/api
 import {
   MapPin,
   Syringe,
@@ -34,6 +34,16 @@ function safePhoto(src, seed = "pet", w = 960, h = 640) {
     : `https://picsum.photos/seed/${seed}/${w}/${h}`;
 }
 
+// ✅ new: build full URL for uploaded photos
+function buildPhotoUrl(filename) {
+  if (!filename) return null;
+  // if api.defaults.baseURL = http://localhost:5000/api
+  const base = api.defaults.baseURL.replace(/\/api$/, "");
+  return `${base}/uploads/${filename}`;
+}
+
+const digitsOnly = (v) => (v == null ? "" : String(v).replace(/\D/g, ""));
+
 /* ---------- page ---------- */
 export default function PetDetails() {
   const { id } = useParams();
@@ -47,7 +57,6 @@ export default function PetDetails() {
 
   const [copied, setCopied] = React.useState(false);
   const [mainIdx, setMainIdx] = React.useState(0);
-  const [startingChat, setStartingChat] = React.useState(false);
 
   const copyLink = async () => {
     try {
@@ -68,43 +77,34 @@ export default function PetDetails() {
       navigate(`/login?redirect=/pets/${id}`);
       return;
     }
-    navigate(`/adoption/apply/${id}`);
+
+    const ownerId = current.ownerId; // Ensure this is available
+    if (!ownerId) {
+      console.error("Owner ID not found for this pet.");
+      return;
+    }
+
+    navigate(`/owners/${ownerId}`);
   };
 
-  // 👉 Start or fetch conversation
-  const handleMessageOwner = async () => {
-    if (!user) {
-      navigate(`/login?redirect=/pets/${id}`);
+  // 👉 Message Owner (WhatsApp deep-link)
+  const handleMessageOwner = () => {
+    if (!current) return;
+    const rawPhone =
+      current.contactPhone ||
+      current?.listedBy?.phone ||
+      current?.ownerPhone ||
+      "";
+    const phone = digitsOnly(rawPhone);
+    if (!phone) {
+      alert("Owner has not provided a phone number.");
       return;
     }
-    if (!current?.ownerId) {
-      console.error("Pet missing ownerId — check your backend response");
-      return;
-    }
-    try {
-      setStartingChat(true);
-      // IMPORTANT: using api (baseURL=/api), so this hits /api/chat/start
-      const { data } = await api.post("/chat/start", {
-        partnerId: current.ownerId,
-        petId: current._id,
-      });
-      if (data?.success && data?.data?._id) {
-        navigate(`/chat/${data.data._id}`);
-      } else {
-        console.error("Unexpected /chat/start response:", data);
-        alert("Could not start chat (unexpected response).");
-      }
-    } catch (err) {
-      console.error(
-        "Error starting chat:",
-        err.response?.status,
-        err.response?.data || err.message
-      );
-      // If you still see 404 here, your baseURL/env/proxy isn’t aligned.
-      alert("Could not start chat. Please try again.");
-    } finally {
-      setStartingChat(false);
-    }
+    const ownerName =
+      current?.listedBy?.fullname || current?.ownerName || "there";
+    const message = `Hi ${ownerName}, I'm interested in adopting "${current.name}". Is it still available?`;
+    const waLink = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+    window.open(waLink, "_blank");
   };
 
   /* ---------- states ---------- */
@@ -140,9 +140,9 @@ export default function PetDetails() {
   /* ---------- data ---------- */
   const photos = (
     current.photos && current.photos.length ? current.photos : [null]
-  ).map((p, i) => safePhoto(p, current?._id || `pet-${i}`));
-  const mainPhoto = photos[Math.min(mainIdx, photos.length - 1)] || photos[0];
+  ).map((p, i) => buildPhotoUrl(p) || safePhoto(p, current?._id || `pet-${i}`));
 
+  const mainPhoto = photos[Math.min(mainIdx, photos.length - 1)] || photos[0];
   const posted = current?.createdAt
     ? new Date(current.createdAt).toLocaleDateString()
     : "recently";
@@ -224,7 +224,6 @@ export default function PetDetails() {
                 <CalendarDays className="h-4 w-4" />
                 <span>Posted {posted}</span>
               </div>
-
               <button
                 onClick={copyLink}
                 className="inline-flex items-center gap-1 rounded-full border px-3 py-1 hover:bg-gray-50 dark:hover:bg-white/10"
@@ -237,7 +236,6 @@ export default function PetDetails() {
                 )}
                 {copied ? "Copied" : "Share"}
               </button>
-
               <button
                 onClick={() => {}}
                 className="inline-flex items-center gap-1 rounded-full border px-3 py-1 hover:bg-gray-50 dark:hover:bg-white/10"
@@ -311,14 +309,6 @@ export default function PetDetails() {
                   >
                     Adopt this {current.species?.toLowerCase() || "pet"}
                   </button>
-
-                  <button
-                    onClick={handleMessageOwner}
-                    disabled={startingChat}
-                    className="block w-full rounded-xl border px-4 py-2 text-center font-medium hover:bg-gray-50 dark:hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-gray-300 disabled:opacity-50"
-                  >
-                    {startingChat ? "Starting chat..." : "Message owner"}
-                  </button>
                 </div>
 
                 {/* quick recap */}
@@ -340,7 +330,7 @@ export default function PetDetails() {
                   </div>
                   {current.shelterPhone && (
                     <a
-                      href={`tel:${current.shelterPhone}`}
+                      href={`tel:${digitsOnly(current.shelterPhone)}`}
                       className="mt-3 block rounded-xl border px-3 py-2 text-center text-sm hover:bg-gray-50 dark:hover:bg-white/10"
                     >
                       Call

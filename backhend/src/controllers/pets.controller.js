@@ -60,6 +60,20 @@ function withOwnerId(doc) {
   return obj;
 }
 
+// keep only digits; return "" for falsy
+function digitsOnly(v) {
+  if (v == null) return "";
+  return String(v).replace(/\D/g, "");
+}
+
+// ensure 10–15 digits or undefined if empty
+function normalizeContactPhone(v) {
+  const d = digitsOnly(v);
+  if (!d) return undefined;
+  if (!/^[0-9]{10,15}$/.test(d)) return null; // invalid marker
+  return d;
+}
+
 /* ---------------------------- controllers --------------------------- */
 
 // GET /pets
@@ -182,7 +196,8 @@ export async function listMyPets(req, res, next) {
 export async function getPetById(req, res, next) {
   try {
     const { id } = req.params;
-    const pet = await Pet.findById(id);
+    const pet = await Pet.findById(id)
+      .populate({ path: "listedBy", select: "fullname username phone" }); // <-- expose owner phone
     if (!pet) return next(httpError(404, "Pet not found"));
     res.json({ success: true, data: withOwnerId(pet) });
   } catch (err) {
@@ -197,6 +212,13 @@ export async function createPet(req, res, next) {
     if (!meId) return next(httpError(401, "Login required"));
 
     const body = { ...req.body };
+
+    // Optional: per-pet WhatsApp override
+    if (body.contactPhone !== undefined) {
+      const norm = normalizeContactPhone(body.contactPhone);
+      if (norm === null) return next(httpError(400, "contactPhone must be 10-15 digits (numbers only)"));
+      body.contactPhone = norm;
+    }
 
     // Normalize legacy key
     body.otherSpecies = body.otherSpecies ?? body.speciesOther;
@@ -242,6 +264,13 @@ export async function updatePetById(req, res, next) {
 
     const body = { ...req.body };
 
+    // Optional: per-pet WhatsApp override
+    if (body.contactPhone !== undefined) {
+      const norm = normalizeContactPhone(body.contactPhone);
+      if (norm === null) return next(httpError(400, "contactPhone must be 10-15 digits (numbers only)"));
+      body.contactPhone = norm;
+    }
+
     // Normalize legacy key
     body.otherSpecies = body.otherSpecies ?? body.speciesOther;
     delete body.speciesOther;
@@ -265,7 +294,7 @@ export async function updatePetById(req, res, next) {
       body.photos = Array.isArray(pet.photos) ? [...pet.photos, ...uploaded] : uploaded;
     }
 
-    // Whitelist updatable fields
+    // Whitelist updatable fields (added contactPhone)
     const allowed = [
       "name",
       "species",
@@ -281,6 +310,7 @@ export async function updatePetById(req, res, next) {
       "description",
       "photos",
       "status",
+      "contactPhone", // <-- new
     ];
     const updates = {};
     for (const k of allowed) {

@@ -84,6 +84,12 @@ export default function Login() {
         <Button type="submit" className="w-full" disabled={submitting}>
           {submitting ? "Signing in…" : "Sign in"}
         </Button>
+
+        <div className="mt-2 text-right">
+          <Link to="/forgot-password" className="text-sm underline">
+            Forgot password?
+          </Link>
+        </div>
       </form>
 
       <p className="mt-4 text-sm text-mutedForeground">

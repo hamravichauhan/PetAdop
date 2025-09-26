@@ -19,10 +19,15 @@ const envList = (process.env.CORS_ORIGIN || "")
   .map((s) => s.trim())
   .filter(Boolean);
 const FALLBACK_SOCKET_CORS = { origin: envList.length ? envList : devDefaults, credentials: true };
+// Prefer what app.js calculated; otherwise fall back
 const SOCKET_CORS = APP_SOCKET_CORS || FALLBACK_SOCKET_CORS;
 
 /* ---------- HTTP + Express ---------- */
 const server = http.createServer(app);
+
+// Optional: tune Node's timeouts for long-lived WS connections
+server.keepAliveTimeout = 61_000;   // > 60s to outlive common proxies
+server.headersTimeout   = 65_000;
 
 /* ---------- Socket.IO ---------- */
 const io = new SocketIOServer(server, {
@@ -40,15 +45,24 @@ function stripBearer(t) {
   return t.replace(/^Bearer\s+/i, "");
 }
 
+/* ---------- Extract accessToken from Cookie header ---------- */
+function readCookieToken(headers) {
+  const raw = headers?.cookie || "";
+  const m = raw.match(/(?:^|;\s*)accessToken=([^;]+)/);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
+}
+
 /* ---------- Socket auth (JWT) ---------- */
 io.use((socket, next) => {
   try {
-    const authToken = stripBearer(socket.handshake.auth?.token);
+    const authToken   = stripBearer(socket.handshake.auth?.token);
     const headerToken = stripBearer(socket.handshake.headers?.authorization);
-    const cookieToken = (() => {
-      const m = socket.handshake.headers?.cookie?.match(/(?:^|;\s*)accessToken=([^;]+)/);
-      return m && m[1];
-    })();
+    const cookieToken = readCookieToken(socket.handshake.headers);
 
     const token = authToken || headerToken || cookieToken;
     if (!token) return next(new Error("No token provided"));

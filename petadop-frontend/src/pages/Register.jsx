@@ -15,6 +15,8 @@ function buildDefaultAvatar({ username = "", fullname = "" }) {
   )}&backgroundType=gradientLinear`;
 }
 
+const digitsOnly = (v) => (v == null ? "" : String(v).replace(/\D/g, ""));
+
 export default function Register() {
   const { register: signup, isAuthed } = useAuthStore();
   const nav = useNavigate();
@@ -24,6 +26,7 @@ export default function Register() {
     fullname: "",
     username: "",
     email: "",
+    phone: "", // ✅ NEW
     password: "",
     confirm: "",
   });
@@ -47,6 +50,10 @@ export default function Register() {
     if (!form.fullname.trim()) return "Full name is required";
     if (!form.username.trim()) return "Username is required";
     if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) return "Enter a valid email";
+
+    const phoneDigits = digitsOnly(form.phone);
+    if (!/^[0-9]{10,15}$/.test(phoneDigits))
+      return "Phone must be 10–15 digits (numbers only)";
 
     const len = form.password.length;
     if (len < 8 || len > 16) return "Password must be 8–16 characters";
@@ -80,6 +87,7 @@ export default function Register() {
       fullname: form.fullname.trim(),
       username: form.username.trim(),
       email: form.email.trim().toLowerCase(),
+      phone: digitsOnly(form.phone), // ✅ send digits-only
       password: form.password,
       ...(avatarMode === "custom" && resolvedAvatar
         ? { avatar: resolvedAvatar }
@@ -132,6 +140,22 @@ export default function Register() {
           autoComplete="email"
           required
         />
+
+        {/* ✅ Phone number */}
+        <Input
+          id="phone"
+          placeholder="Phone (digits only, e.g., 919876543210)"
+          type="tel"
+          inputMode="numeric"
+          pattern="[0-9]{10,15}"
+          value={form.phone}
+          onChange={(e) => update("phone", digitsOnly(e.target.value))}
+          autoComplete="tel"
+          required
+        />
+        <p className="text-xs text-mutedForeground -mt-2">
+          We’ll use this to connect adopters to you on WhatsApp.
+        </p>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="relative">

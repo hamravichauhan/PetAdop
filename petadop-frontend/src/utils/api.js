@@ -78,7 +78,10 @@ function isAuthEndpointUrl(fullUrl = "") {
     u.endsWith("/auth/login") ||
     u.endsWith("/auth/register") ||
     u.endsWith("/auth/refresh") ||
-    u.endsWith("/auth/logout")
+    u.endsWith("/auth/logout") ||
+    // ✅ include password routes so refresh interceptor doesn't loop on them
+    u.endsWith("/auth/password/forgot") ||
+    u.endsWith("/auth/password/reset")
   );
 }
 
