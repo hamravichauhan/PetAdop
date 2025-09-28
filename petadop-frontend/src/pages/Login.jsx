@@ -7,7 +7,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 
 export default function Login() {
   const { login, isAuthed } = useAuthStore();
-  const [identifier, setIdentifier] = React.useState("");
+  const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [err, setErr] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
@@ -26,19 +26,29 @@ export default function Login() {
     if (submitting) return; // prevent double-submit
     setErr("");
 
-    const id = identifier.trim();
-    if (!id) return setErr("Enter email or username");
-    if (password.length < 8)
+    const em = email.trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(em)) {
+      return setErr("Enter a valid email address");
+    }
+    // If you want to mirror reset rule exactly, use 8–16:
+    if (password.length < 8) {
       return setErr("Password must be at least 8 characters");
+    }
 
     setSubmitting(true);
-    const res = await login({ identifier: id, password });
-    setSubmitting(false);
+    try {
+      // Backend expects { email, password }
+      const res = await login({ email: em, password });
+      setSubmitting(false);
 
-    if (res?.ok) {
-      nav(from, { replace: true });
-    } else {
-      setErr(res?.error || "Invalid credentials");
+      if (res?.ok) {
+        nav(from, { replace: true });
+      } else {
+        setErr(res?.message || res?.error || "Invalid credentials");
+      }
+    } catch {
+      setSubmitting(false);
+      setErr("Something went wrong. Please try again.");
     }
   };
 
@@ -51,11 +61,12 @@ export default function Login() {
 
       <form onSubmit={submit} className="space-y-4">
         <Input
-          id="identifier"
-          placeholder="Email or username"
-          value={identifier}
-          onChange={(e) => setIdentifier(e.target.value)}
-          autoComplete="username email"
+          id="email"
+          placeholder="you@example.com"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          autoComplete="email username"
           required
         />
 
@@ -86,6 +97,7 @@ export default function Login() {
         </Button>
 
         <div className="mt-2 text-right">
+          {/* ✅ route path corrected */}
           <Link to="/forgot-password" className="text-sm underline">
             Forgot password?
           </Link>

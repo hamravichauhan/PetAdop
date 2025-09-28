@@ -20,6 +20,14 @@ import { useAuthStore } from "./store/auth.js";
 
 import ChatPage from "./pages/ChatPage.jsx";
 
+// NEW pages
+import MyListings from "./pages/MyListings.jsx";
+import EditPet from "./pages/EditPet.jsx";
+
+// ✅ add these
+import ForgotPassword from "./pages/ForgotPassword.jsx";
+import ResetPassword from "./pages/ResetPassword.jsx";
+
 const PageWrapper = ({ children }) => (
   <motion.main
     className="min-h-[calc(100vh-5rem)]"
@@ -45,8 +53,9 @@ export default function App() {
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <Navbar />
 
-      <AnimatePresence mode="wait">
+      <AnimatePresence mode="wait" initial={false}>
         <Routes location={location} key={location.pathname}>
+          {/* Public */}
           <Route
             path="/"
             element={
@@ -71,15 +80,42 @@ export default function App() {
               </PageWrapper>
             }
           />
-          <Route path="/chat/:id" element={<ChatPage />} />
+          <Route
+            path="/chat/:id"
+            element={
+              <PageWrapper>
+                <ChatPage />
+              </PageWrapper>
+            }
+          />
 
-          {/* Protected routes */}
+          {/* Protected */}
           <Route
             path="/new"
             element={
               <RequireAuth>
                 <PageWrapper>
                   <NewPet />
+                </PageWrapper>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/my-listings"
+            element={
+              <RequireAuth>
+                <PageWrapper>
+                  <MyListings />
+                </PageWrapper>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/pets/:id/edit"
+            element={
+              <RequireAuth>
+                <PageWrapper>
+                  <EditPet />
                 </PageWrapper>
               </RequireAuth>
             }
@@ -112,7 +148,24 @@ export default function App() {
               </PageWrapper>
             }
           />
+          <Route
+            path="/forgot-password"
+            element={
+              <PageWrapper>
+                <ForgotPassword />
+              </PageWrapper>
+            }
+          />
+          <Route
+            path="/reset-password"
+            element={
+              <PageWrapper>
+                <ResetPassword />
+              </PageWrapper>
+            }
+          />
 
+          {/* 404 */}
           <Route
             path="*"
             element={

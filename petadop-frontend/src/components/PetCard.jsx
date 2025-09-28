@@ -1,123 +1,104 @@
+// src/components/PetCard.jsx
 import React from "react";
-import { motion } from "framer-motion";
-import { MapPin, Syringe, ShieldCheck, Heart } from "lucide-react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
+import { MapPin } from "lucide-react";
+import { useAuthStore } from "../store/auth.js";
+
+/** Turn a photo value into a browser-loadable URL. */
+function resolvePhoto(raw, apiOrigin) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (/^https?:\/\//i.test(s) || s.startsWith("data:")) return s;
+
+  // Normalize to "/uploads/..."
+  const path = s.startsWith("/uploads/")
+    ? s
+    : s.startsWith("uploads/")
+    ? `/${s}`
+    : s;
+
+  const base = (apiOrigin || "").replace(/\/+$/, "");
+  if (path.startsWith("/uploads/")) return `${base}${path}`;
+  return `${base}/uploads/${path.replace(/^\/+/, "")}`;
+}
 
 export default function PetCard({ pet }) {
-  const [liked, setLiked] = React.useState(false);
-  const photo =
-    pet?.photos?.[0] || `https://picsum.photos/seed/${pet?._id}/600/400`;
-  const ageText =
-    pet?.ageYears || pet?.ageMonths
-      ? [
-          pet.ageYears ? `${pet.ageYears}y` : null,
-          pet.ageMonths ? `${pet.ageMonths}m` : null,
-        ]
-          .filter(Boolean)
-          .join(" ")
-      : "—";
+  const navigate = useNavigate();
+  const me = useAuthStore((s) => s.user);
+
+  const API_ORIGIN = import.meta.env?.VITE_API_ORIGIN || "";
+
+  const id = pet?._id || pet?.id;
+  const myId = me?._id || me?.id || null;
+
+  // Owner detection handles several shapes
+  const ownerId =
+    pet?.ownerId ??
+    pet?.owner?._id ??
+    pet?.owner?.id ??
+    pet?.listedBy?._id ??
+    pet?.listedBy?.id ??
+    (typeof pet?.listedBy === "string" ? pet.listedBy : null);
+
+  const isMine = !!myId && !!ownerId && String(ownerId) === String(myId);
+
+  // NEWEST photo (last), fallback to picsum
+  const photo = React.useMemo(() => {
+    const arr = Array.isArray(pet?.photos) ? pet.photos : [];
+    const raw = arr.length > 0 ? arr[arr.length - 1] : null;
+    const resolved = resolvePhoto(raw, API_ORIGIN);
+    return (
+      resolved ||
+      (id
+        ? `https://picsum.photos/seed/${id}/600/400`
+        : "https://picsum.photos/600/400")
+    );
+  }, [id, pet?.photos, API_ORIGIN]);
+
+  const onOpen = () => {
+    if (!id) return;
+    navigate(isMine ? `/pets/${id}/edit` : `/pets/${id}`);
+  };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true }}
-      transition={{ duration: 0.25 }}
-    >
-      <Link
-        to={`/pets/${pet._id}`}
-        className="group block overflow-hidden rounded-2xl bg-gradient-to-b from-gray-800 to-gray-900 shadow-md transition hover:shadow-xl"
-      >
-        {/* photo */}
-        <div className="relative aspect-[4/3] w-full overflow-hidden">
-          <img
-            src={photo}
-            alt={pet?.name}
-            className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-            loading="lazy"
-            onError={(e) => {
-              // Fallback if image fails to load
-              e.target.src = `https://picsum.photos/seed/${pet?._id}/600/400`;
-            }}
-          />
+    <div className="overflow-hidden rounded-2xl bg-gradient-to-b from-gray-800 to-gray-900 shadow-md">
+      {/* image (not clickable) */}
+      <div className="relative aspect-[4/3] w-full overflow-hidden">
+        <img
+          src={photo}
+          alt={pet?.name || "Pet photo"}
+          className="h-full w-full object-cover"
+          loading="lazy"
+          onError={(e) => {
+            const img = e.currentTarget;
+            if (img.dataset.fallbackApplied === "true") return;
+            img.dataset.fallbackApplied = "true";
+            img.src = id
+              ? `https://picsum.photos/seed/${id}/600/400`
+              : "https://picsum.photos/600/400";
+          }}
+        />
+      </div>
 
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
-          {/* top badges */}
-          <div className="absolute left-3 top-3 flex gap-2">
-            <span className="rounded-full bg-green-500/90 px-2 py-0.5 text-xs font-semibold text-white">
-              Available
-            </span>
-            {pet?.species && (
-              <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-medium text-gray-800">
-                {pet.species}
-              </span>
-            )}
-          </div>
+      {/* content */}
+      <div className="p-4">
+        <h3 className="text-lg font-bold text-white">
+          {pet?.name || "Lovely friend"}
+        </h3>
+        <p className="mt-1 flex items-center gap-1 text-sm text-gray-300">
+          <MapPin className="h-4 w-4" /> {pet?.city || "Unknown"}
+        </p>
 
-          {/* heart/fav */}
-          <button
-            onClick={(e) => {
-              e.preventDefault();
-              setLiked((v) => !v);
-            }}
-            className="absolute right-3 top-3 rounded-full bg-white/90 p-2 text-gray-700 shadow hover:bg-white"
-          >
-            <Heart
-              className={`h-4 w-4 ${liked ? "fill-red-500 text-red-500" : ""}`}
-            />
-          </button>
-
-          {/* bottom chips */}
-          <div className="absolute bottom-3 left-3 flex gap-2 text-xs font-medium">
-            {ageText !== "—" && (
-              <span className="rounded-full bg-white/90 px-2 py-0.5">
-                {ageText}
-              </span>
-            )}
-            {pet?.gender && (
-              <span className="rounded-full bg-white/90 px-2 py-0.5">
-                {pet.gender}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* content */}
-        <div className="p-4">
-          <h3 className="text-lg font-bold text-white">
-            {pet?.name || "Lovely friend"}
-          </h3>
-          <p className="mt-1 flex items-center gap-1 text-sm text-gray-300">
-            <MapPin className="h-4 w-4" /> {pet?.city || "Unknown"}
-          </p>
-
-          {/* vaccinated/sterilized */}
-          <div className="mt-3 flex flex-wrap gap-2 text-xs">
-            {pet?.vaccinated && (
-              <span className="flex items-center gap-1 rounded-full bg-blue-600/90 px-2 py-0.5 text-white">
-                <Syringe className="h-3 w-3" /> Vaccinated
-              </span>
-            )}
-            {pet?.sterilized && (
-              <span className="flex items-center gap-1 rounded-full bg-purple-600/90 px-2 py-0.5 text-white">
-                <ShieldCheck className="h-3 w-3" /> Sterilized
-              </span>
-            )}
-          </div>
-
-          {/* CTA */}
-          <button className="mt-4 w-full rounded-xl bg-emerald-500 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600">
-            Adopt me
-          </button>
-
-          <p className="mt-2 text-xs text-gray-400">
-            Posted{" "}
-            {pet?.createdAt
-              ? new Date(pet.createdAt).toLocaleDateString()
-              : "recently"}
-          </p>
-        </div>
-      </Link>
-    </motion.div>
+        {/* Only this button navigates */}
+        <button
+          type="button"
+          onClick={onOpen}
+          className="mt-4 w-full rounded-xl bg-emerald-500 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600"
+        >
+          {isMine ? "Edit listing" : "View details"}
+        </button>
+      </div>
+    </div>
   );
 }

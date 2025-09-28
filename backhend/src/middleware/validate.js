@@ -2,11 +2,12 @@
 import { validationResult } from "express-validator";
 
 /**
- * Collects express-validator errors and returns 400 if any.
- * Use after your validator arrays, before the controller.
+ * Collects express-validator errors and returns 400 with
+ * structured error details if any are found.
  */
 export const handleValidation = (req, res, next) => {
   const result = validationResult(req);
+
   if (!result.isEmpty()) {
     return res.status(400).json({
       success: false,
@@ -18,5 +19,6 @@ export const handleValidation = (req, res, next) => {
       })),
     });
   }
+
   next();
 };

@@ -7,10 +7,13 @@ import { Server as SocketIOServer } from "socket.io";
 import connectDB from "./config/db.js";
 import app, { SOCKET_CORS as APP_SOCKET_CORS } from "./app.js";
 
-// controllers for persistence
-import { createMessage, touchConversation, markRead } from "./controllers/chat.controller.js";
-// If you want to enforce membership on join, uncomment the next line and use it below:
-// import Conversation from "./models/conversation.js";
+// chat persistence
+// import {
+//   createMessage,
+//   touchConversation,
+//   markRead,
+// } from "./controllers/chat.controller.js";
+// import Conversation from "./models/conversation.js"; // if you want membership enforcement
 
 /* ---------- Socket CORS ---------- */
 const devDefaults = ["http://localhost:5173", "http://127.0.0.1:5173"];
@@ -18,34 +21,35 @@ const envList = (process.env.CORS_ORIGIN || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-const FALLBACK_SOCKET_CORS = { origin: envList.length ? envList : devDefaults, credentials: true };
-// Prefer what app.js calculated; otherwise fall back
+
+const FALLBACK_SOCKET_CORS = {
+  origin: envList.length ? envList : devDefaults,
+  credentials: true,
+};
+
 const SOCKET_CORS = APP_SOCKET_CORS || FALLBACK_SOCKET_CORS;
 
 /* ---------- HTTP + Express ---------- */
 const server = http.createServer(app);
-
-// Optional: tune Node's timeouts for long-lived WS connections
-server.keepAliveTimeout = 61_000;   // > 60s to outlive common proxies
-server.headersTimeout   = 65_000;
+server.keepAliveTimeout = 61_000; // keep-alive > 60s (proxy safe)
+server.headersTimeout = 65_000;
 
 /* ---------- Socket.IO ---------- */
 const io = new SocketIOServer(server, {
   cors: SOCKET_CORS,
   path: "/socket.io",
-  transports: ["websocket"], // dev: skip polling issues
+  transports: ["websocket"], // dev: skip polling
 });
 
-// Expose io to routes/controllers if needed
+// expose io globally to app if needed
 app.set("io", io);
 
-/* ---------- Helper: normalize Bearer tokens ---------- */
-function stripBearer(t) {
-  if (!t || typeof t !== "string") return t;
-  return t.replace(/^Bearer\s+/i, "");
+/* ---------- Helpers ---------- */
+function stripBearer(token) {
+  if (!token || typeof token !== "string") return token;
+  return token.replace(/^Bearer\s+/i, "");
 }
 
-/* ---------- Extract accessToken from Cookie header ---------- */
 function readCookieToken(headers) {
   const raw = headers?.cookie || "";
   const m = raw.match(/(?:^|;\s*)accessToken=([^;]+)/);
@@ -57,10 +61,10 @@ function readCookieToken(headers) {
   }
 }
 
-/* ---------- Socket auth (JWT) ---------- */
+/* ---------- Socket Auth ---------- */
 io.use((socket, next) => {
   try {
-    const authToken   = stripBearer(socket.handshake.auth?.token);
+    const authToken = stripBearer(socket.handshake.auth?.token);
     const headerToken = stripBearer(socket.handshake.headers?.authorization);
     const cookieToken = readCookieToken(socket.handshake.headers);
 
@@ -68,55 +72,43 @@ io.use((socket, next) => {
     if (!token) return next(new Error("No token provided"));
 
     const payload = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
-    socket.user = { _id: String(payload._id), username: payload.username, email: payload.email };
-    return next();
-  } catch (err) {
-    return next(new Error("Unauthorized"));
+    socket.user = {
+      _id: String(payload._id),
+      username: payload.username,
+      email: payload.email,
+    };
+    next();
+  } catch {
+    next(new Error("Unauthorized"));
   }
 });
 
-/* ---------- Room name helper ---------- */
+/* ---------- Room Helper ---------- */
 const roomOf = (conversationId) => `conv:${conversationId}`;
 
-/* ---------- Chat events ---------- */
+/* ---------- Chat Events ---------- */
 io.on("connection", (socket) => {
   const userId = socket.user?._id;
-  if (!userId) {
-    socket.disconnect(true);
-    return;
-  }
+  if (!userId) return socket.disconnect(true);
 
-  // Personal room (notifications etc.)
+  // personal room for notifications
   socket.join(`user:${userId}`);
 
-  // Join a conversation room
   socket.on("chat:join", async ({ conversationId }) => {
-    try {
-      if (!conversationId) return;
-
-      // OPTIONAL: enforce membership
-      // const convo = await Conversation.findById(conversationId).select("participants");
-      // if (!convo || !convo.participants?.map(String).includes(userId)) return;
-
-      socket.join(roomOf(conversationId));
-
-      // Optional presence broadcast
-      socket.to(roomOf(conversationId)).emit("chat:presence", {
-        conversationId,
-        userId,
-        online: true,
-      });
-    } catch (e) {
-      console.error("chat:join error", e);
-    }
+    if (!conversationId) return;
+    // (optional) check membership here
+    socket.join(roomOf(conversationId));
+    socket.to(roomOf(conversationId)).emit("chat:presence", {
+      conversationId,
+      userId,
+      online: true,
+    });
   });
 
   socket.on("chat:leave", ({ conversationId }) => {
-    if (!conversationId) return;
-    socket.leave(roomOf(conversationId));
+    if (conversationId) socket.leave(roomOf(conversationId));
   });
 
-  // Typing indicator (ephemeral)
   socket.on("chat:typing", ({ conversationId, isTyping }) => {
     if (!conversationId) return;
     socket.to(roomOf(conversationId)).emit("chat:typing", {
@@ -126,20 +118,11 @@ io.on("connection", (socket) => {
     });
   });
 
-  // Persist + broadcast messages, with ACK for optimistic UI
   socket.on("chat:message", async (payload, ack) => {
     try {
       const { conversationId, text, attachments } = payload || {};
       if (!conversationId || (!text && !attachments?.length)) return;
 
-      // OPTIONAL: enforce membership (same as in join)
-      // const convo = await Conversation.findById(conversationId).select("participants");
-      // if (!convo || !convo.participants?.map(String).includes(userId)) {
-      //   if (typeof ack === "function") ack({ error: "forbidden" });
-      //   return;
-      // }
-
-      // 1) Save
       const saved = await createMessage({
         conversationId,
         sender: userId,
@@ -147,13 +130,9 @@ io.on("connection", (socket) => {
         attachments,
       });
 
-      // 2) Update conversation preview/unread
       await touchConversation(conversationId, saved);
-
-      // 3) Broadcast to room (including sender for consistency)
       io.to(roomOf(conversationId)).emit("chat:message", saved);
 
-      // 4) ACK to sender to reconcile optimistic bubble
       if (typeof ack === "function") ack(saved);
     } catch (err) {
       console.error("chat:message error", err);
@@ -162,7 +141,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Read receipts (persist + notify)
   socket.on("chat:read", async ({ conversationId, at }) => {
     try {
       if (!conversationId) return;
@@ -177,33 +155,31 @@ io.on("connection", (socket) => {
         userId,
         at: readAt.toISOString(),
       });
-    } catch (e) {
-      console.error("chat:read error", e);
+    } catch (err) {
+      console.error("chat:read error", err);
     }
-  });
-
-  socket.on("disconnect", () => {
-    // optional: presence cleanup
   });
 });
 
-/* ---------- Start server after DB ---------- */
+/* ---------- Start Server ---------- */
 const PORT = Number(process.env.PORT || 3000);
 
 connectDB()
   .then(() => {
-    server.listen(PORT, () => {
-      console.log(`🚀 HTTP + WebSocket server on :${PORT}`);
-    });
+    server.listen(PORT, () =>
+      console.log(`🚀 HTTP + WebSocket server on :${PORT}`)
+    );
   })
-  .catch((error) => {
-    console.error("❌ Error connecting to database", error);
+  .catch((err) => {
+    console.error("❌ Error connecting to database", err);
     process.exit(1);
   });
 
-/* ---------- Graceful shutdown ---------- */
+/* ---------- Graceful Shutdown ---------- */
 function shutdown(sig) {
   console.log(`${sig} received. Shutting down...`);
   server.close(() => process.exit(0));
 }
 ["SIGINT", "SIGTERM"].forEach((s) => process.on(s, () => shutdown(s)));
+
+export default server;

@@ -1,7 +1,6 @@
 // src/controllers/password.controller.js
 import crypto from "node:crypto";
-import bcrypt from "bcryptjs";
-import {User} from "../models/User.js";
+import { User } from "../models/User.js";
 import PasswordResetToken from "../models/PasswordResetToken.js";
 
 const RESET_TTL_MIN = Number(process.env.PASSWORD_RESET_TTL_MIN || 30);
@@ -45,7 +44,9 @@ export async function forgotPassword(req, res, next) {
 export async function resetPassword(req, res, next) {
   try {
     const { token, password } = req.body || {};
-    if (!token || !password) return res.status(400).json({ success: false, message: "token and password are required" });
+    if (!token || !password) {
+      return res.status(400).json({ success: false, message: "token and password are required" });
+    }
     if (String(password).length < 8 || String(password).length > 16) {
       return res.status(400).json({ success: false, message: "Password must be 8–16 characters" });
     }
@@ -59,7 +60,8 @@ export async function resetPassword(req, res, next) {
     const user = await User.findById(row.user).select("+password");
     if (!user) return res.status(400).json({ success: false, message: "Invalid token" });
 
-    user.password = await bcrypt.hash(String(password), 10);
+    // Let the User pre-save hook hash the password
+    user.password = String(password);
     await user.save();
 
     row.used = true;

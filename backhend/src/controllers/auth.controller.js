@@ -1,6 +1,8 @@
 // src/controllers/auth.controller.js
 import jwt from "jsonwebtoken";
-import { User } from "../models/User.js";
+// If your model exports default (recommended):
+import {User} from "../models/User.js";
+// If your model exports named:  import { User } from "../models/User.js";
 
 const useCookie = (process.env.USE_REFRESH_COOKIE || "false").toLowerCase() === "true";
 
@@ -20,11 +22,21 @@ function buildDefaultAvatar({ username = "", fullname = "" }) {
   return `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(seed)}&backgroundType=gradientLinear`;
 }
 
+const digitsOnly = (v) => (v == null ? "" : String(v).replace(/\D/g, ""));
+
 /* -------------------- controllers -------------------- */
 
 export const register = async (req, res, next) => {
   try {
-    let { username, fullname, email, password, avatar } = req.body || {};
+    let {
+      username,
+      fullname,
+      email,
+      password,
+      avatar,
+      contactPhone, // preferred from frontend
+      phone,        // fallback if someone sends `phone`
+    } = req.body || {};
 
     // Normalize
     username = (username || "").trim();
@@ -32,9 +44,20 @@ export const register = async (req, res, next) => {
     email = (email || "").trim().toLowerCase();
     avatar = (avatar || "").trim();
 
+    // Phone: accept either key, sanitize to digits, validate 10–15
+    let phoneDigits = digitsOnly(contactPhone ?? phone);
+    if (!phoneDigits || !/^[0-9]{10,15}$/.test(phoneDigits)) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone must be 10–15 digits (numbers only)",
+      });
+    }
+
     // Basic validation (schema will enforce too)
     if (!username || !fullname || !email || !password) {
-      return res.status(400).json({ success: false, message: "username, fullname, email and password are required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "username, fullname, email and password are required" });
     }
     if (password.length < 8 || password.length > 16) {
       return res.status(400).json({ success: false, message: "Password must be 8–16 characters" });
@@ -53,7 +76,15 @@ export const register = async (req, res, next) => {
       avatar = buildDefaultAvatar({ username, fullname });
     }
 
-    const created = await User.create({ username, fullname, email, password, avatar });
+    // Create user (include phoneDigits)
+    const created = await User.create({
+      username,
+      fullname,
+      email,
+      password,
+      avatar,
+      phone: phoneDigits, // <-- store sanitized digits
+    });
 
     // Public user (no password)
     const user = await User.findById(created._id);
@@ -65,15 +96,16 @@ export const register = async (req, res, next) => {
 
     return res.status(201).json({
       success: true,
-      user,                     // top-level for frontend convenience
-      accessToken,              // top-level for frontend convenience
-      tokens: {                 // keep nested structure for compatibility
+      user,
+      accessToken,
+      tokens: {
         accessToken,
         refreshToken: useCookie ? undefined : refreshToken,
       },
     });
   } catch (e) {
     if (e?.code === 11000) {
+      // duplicate key (email / username / (optional) phone if unique)
       return res.status(409).json({ success: false, message: "Email or username already in use" });
     }
     next(e);
@@ -112,8 +144,8 @@ export const login = async (req, res, next) => {
 
     return res.json({
       success: true,
-      user,                     // top-level
-      accessToken,              // top-level
+      user,
+      accessToken,
       tokens: {
         accessToken,
         refreshToken: useCookie ? undefined : refreshToken,
@@ -149,7 +181,6 @@ export const refresh = async (req, res, next) => {
     return res.json({
       success: true,
       accessToken,
-      // keep old shape too if you want:
       tokens: { accessToken },
     });
   } catch (e) {

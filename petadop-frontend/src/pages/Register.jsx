@@ -26,7 +26,7 @@ export default function Register() {
     fullname: "",
     username: "",
     email: "",
-    phone: "", // ✅ NEW
+    phone: "", // UI-only; we send contactPhone to backend
     password: "",
     confirm: "",
   });
@@ -87,18 +87,29 @@ export default function Register() {
       fullname: form.fullname.trim(),
       username: form.username.trim(),
       email: form.email.trim().toLowerCase(),
-      phone: digitsOnly(form.phone), // ✅ send digits-only
+      contactPhone: digitsOnly(form.phone), // ✅ backend expects contactPhone (digits only)
       password: form.password,
       ...(avatarMode === "custom" && resolvedAvatar
         ? { avatar: resolvedAvatar }
         : {}),
     };
 
-    const res = await signup(payload);
-    setSubmitting(false);
+    try {
+      const res = await signup(payload);
+      setSubmitting(false);
 
-    if (res?.ok) nav(from, { replace: true });
-    else setError(res?.error || "Registration failed. Please try again.");
+      if (res?.ok) {
+        nav(from, { replace: true });
+      } else {
+        // Prefer backend message if present
+        setError(
+          res?.message || res?.error || "Registration failed. Please try again."
+        );
+      }
+    } catch (err) {
+      setSubmitting(false);
+      setError("Something went wrong. Please try again.");
+    }
   };
 
   // If already authed, bounce to home (nice UX)
@@ -141,7 +152,7 @@ export default function Register() {
           required
         />
 
-        {/* ✅ Phone number */}
+        {/* ✅ Phone number (UI keeps digits only; backend receives contactPhone) */}
         <Input
           id="phone"
           placeholder="Phone (digits only, e.g., 919876543210)"

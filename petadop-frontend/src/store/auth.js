@@ -3,7 +3,7 @@ import { create } from "zustand";
 import api from "../utils/api.js";
 
 /**
- * Small helpers to keep token & Authorization header in sync
+ * Token helpers: keep Authorization header and localStorage in sync
  */
 function setToken(token) {
   if (token) {
@@ -17,6 +17,14 @@ function setToken(token) {
 
 function getToken() {
   return localStorage.getItem("token");
+}
+
+function setRefreshToken(rt) {
+  if (rt) localStorage.setItem("refreshToken", rt);
+  else localStorage.removeItem("refreshToken");
+}
+function getRefreshToken() {
+  return localStorage.getItem("refreshToken");
 }
 
 export const useAuthStore = create((set, get) => ({
@@ -35,11 +43,13 @@ export const useAuthStore = create((set, get) => ({
       set({ loadingMe: true });
       setToken(token); // ensure header is set
       const { data } = await api.get("/users/me");
-      const user = data?.user ?? data ?? null;
+      // backend returns { success: true, data: {...} }
+      const user = data?.data ?? data?.user ?? null;
       set({ user, isAuthed: !!user });
     } catch {
       // invalid/expired token
       setToken(null);
+      setRefreshToken(null);
       set({ user: null, isAuthed: false });
     } finally {
       set({ loadingMe: false });
@@ -47,14 +57,23 @@ export const useAuthStore = create((set, get) => ({
   },
 
   /**
-   * Login with email OR username
+   * Login with email OR username (both supported)
+   *  - If called as login({ email, password })
+   *  - Or login({ identifier, password })
    * Auto-logs in by storing token + user
    */
-  async login({ identifier, password }) {
+  async login(creds) {
     try {
-      const body = identifier?.includes("@")
-        ? { email: identifier.trim(), password }
-        : { username: identifier.trim(), password };
+      let body;
+      if (creds?.email) {
+        body = { email: String(creds.email).trim().toLowerCase(), password: creds.password };
+      } else if (creds?.identifier) {
+        const id = String(creds.identifier).trim();
+        body = id.includes("@") ? { email: id.toLowerCase(), password: creds.password }
+                                : { username: id, password: creds.password };
+      } else {
+        throw new Error("Missing credentials");
+      }
 
       const { data } = await api.post("/auth/login", body);
 
@@ -65,7 +84,10 @@ export const useAuthStore = create((set, get) => ({
         data?.tokens?.accessToken ||
         null;
 
+      const refreshToken = data?.tokens?.refreshToken || null;
+
       if (token) setToken(token);
+      if (refreshToken) setRefreshToken(refreshToken);
 
       const user = data?.user ?? null;
       if (user) {
@@ -81,12 +103,13 @@ export const useAuthStore = create((set, get) => ({
         e?.message ||
         "Login failed";
       console.warn("login error:", msg);
-      return { ok: false, error: msg };
+      return { ok: false, error: msg, message: msg };
     }
   },
 
   /**
    * Register and auto-login
+   * backend expects: fullname, username, email, contactPhone, password, [avatar]
    */
   async register(payload) {
     try {
@@ -98,7 +121,10 @@ export const useAuthStore = create((set, get) => ({
         data?.tokens?.accessToken ||
         null;
 
+      const refreshToken = data?.tokens?.refreshToken || null;
+
       if (token) setToken(token);
+      if (refreshToken) setRefreshToken(refreshToken);
 
       const user = data?.user ?? null;
       if (user) {
@@ -114,25 +140,27 @@ export const useAuthStore = create((set, get) => ({
         e?.message ||
         "Registration failed";
       console.warn("register error:", msg);
-      return { ok: false, error: msg };
+      return { ok: false, error: msg, message: msg };
     }
   },
 
   /**
-   * Optional: refresh access token if backend exposes /auth/refresh
-   * Works for either body-token or cookie-based refresh (cookie preferred).
+   * Refresh access token (body-mode with refreshToken, per your backend)
    */
   async refresh() {
     try {
-      const { data } = await api.post("/auth/refresh", {});
+      const refreshToken = getRefreshToken();
+      const body = refreshToken ? { refreshToken } : {};
+      const { data } = await api.post("/auth/refresh", body);
+
       const newToken =
         data?.accessToken ||
         data?.token ||
         data?.tokens?.accessToken ||
         null;
+
       if (newToken) {
         setToken(newToken);
-        // keep user as-is; /users/me will be called on demand
         set({ isAuthed: true });
         return { ok: true };
       }
@@ -140,6 +168,7 @@ export const useAuthStore = create((set, get) => ({
     } catch (e) {
       // refresh failed; clean up session
       setToken(null);
+      setRefreshToken(null);
       set({ user: null, isAuthed: false });
       return { ok: false, error: "Refresh failed" };
     }
@@ -150,13 +179,39 @@ export const useAuthStore = create((set, get) => ({
    */
   async logout() {
     try {
-      // If backend uses cookie for refresh, this clears it
-      await api.post("/auth/logout");
+      await api.post("/auth/logout"); // clears cookie mode if used
     } catch {
       // ignore network errors here
     } finally {
       setToken(null);
+      setRefreshToken(null);
       set({ user: null, isAuthed: false });
+    }
+  },
+
+  /**
+   * Forgot password (privacy-safe)
+   */
+  async forgotPassword(email) {
+    try {
+      await api.post("/auth/password/forgot", { email });
+      return { ok: true };
+    } catch (e) {
+      const msg = e?.response?.data?.message || e?.message || "Request failed";
+      return { ok: false, message: msg, error: msg };
+    }
+  },
+
+  /**
+   * Reset password using token
+   */
+  async resetPassword({ token, password }) {
+    try {
+      const { data } = await api.post("/auth/password/reset", { token, password });
+      return { ok: !!data?.success };
+    } catch (e) {
+      const msg = e?.response?.data?.message || e?.message || "Reset failed";
+      return { ok: false, message: msg, error: msg };
     }
   },
 }));

@@ -1,31 +1,40 @@
-// src/routes/users.routes.js
 import { Router } from "express";
-import { auth, requireSuperAdmin } from "../middleware/auth.js";
-import {
-  getMe,
-   updateMe, 
-   changeMyPassword,
-  listUsers,
-   getUserById, 
-   deleteUserById,
-} from "../controllers/users.controller.js";
-import {
-  updateMeValidator, 
-  changePasswordValidator,
-  userIdParamValidator,
-} from "../validations/user.validation.js";
+import { body } from "express-validator";
+import { getMe, updateMe } from "../controllers/users.controller.js";
 import { handleValidation } from "../middleware/validate.js";
+import { auth } from "../middleware/auth.js";
 
 const router = Router();
 
-/** Me (all users) */
+/** GET current user */
 router.get("/me", auth, getMe);
-router.patch("/me", auth, updateMeValidator, handleValidation, updateMe);
-router.patch("/me/password", auth, changePasswordValidator, handleValidation, changeMyPassword);
 
-/** SuperAdmin moderation */
-router.get("/", auth, requireSuperAdmin, listUsers);
-router.get("/:id", auth, requireSuperAdmin, userIdParamValidator, handleValidation, getUserById);
-router.delete("/:id", auth, requireSuperAdmin, userIdParamValidator, handleValidation, deleteUserById);
+/** PATCH current user
+ *  - fullname: optional, 2–80 chars
+ *  - avatar: optional string
+ *  - phone: optional but if present must be 10–15 digits (numbers only)
+ */
+router.patch(
+  "/me",
+  auth,
+  [
+    body("fullname")
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ min: 2, max: 80 })
+      .withMessage("fullname must be 2–80 characters"),
+    body("avatar").optional().isString().withMessage("avatar must be a string"),
+    body("phone")
+      .optional()
+      .isString()
+      .withMessage("phone must be a string")
+      .customSanitizer((v) => String(v).replace(/\D/g, "")) // strip non-digits
+      .isLength({ min: 10, max: 15 })
+      .withMessage("phone must be 10–15 digits"),
+  ],
+  handleValidation,
+  updateMe
+);
 
 export default router;

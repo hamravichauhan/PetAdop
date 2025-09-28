@@ -3,6 +3,7 @@ import React from "react";
 import Input from "../components/ui/Input.jsx";
 import Button from "../components/ui/Button.jsx";
 import { useAuthStore } from "../store/auth.js";
+import { Link } from "react-router-dom";
 
 export default function ForgotPassword() {
   const { forgotPassword } = useAuthStore();
@@ -11,27 +12,26 @@ export default function ForgotPassword() {
   const [err, setErr] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
 
+  // store reset link from backend
+  const [resetLink, setResetLink] = React.useState("");
+
   const onSubmit = async (e) => {
     e.preventDefault();
     if (submitting) return;
     setErr("");
     setStatus("");
+    setResetLink("");
     const value = email.trim().toLowerCase();
     if (!/^\S+@\S+\.\S+$/.test(value)) return setErr("Enter a valid email");
 
     setSubmitting(true);
-    const res = await forgotPassword(value);
+    const res = await forgotPassword(value); // should return { ok, link? }
     setSubmitting(false);
 
-    // Privacy-safe message regardless of backend result
-    if (res?.ok)
-      setStatus(
-        "If an account exists for that email, we’ve sent a reset link."
-      );
-    else
-      setStatus(
-        "If an account exists for that email, we’ve sent a reset link."
-      );
+    setStatus("If an account exists for that email, we’ve sent a reset link.");
+    if (res?.link) {
+      setResetLink(res.link);
+    }
   };
 
   return (
@@ -59,6 +59,19 @@ export default function ForgotPassword() {
           {submitting ? "Sending…" : "Send reset link"}
         </Button>
       </form>
+
+      {/* Show reset link if backend returned it */}
+      {resetLink && (
+        <div className="mt-6 text-center text-sm">
+          <p className="mb-2 text-mutedForeground">Reset link (dev only):</p>
+          <Link
+            to={resetLink.replace("http://localhost:5173", "")}
+            className="underline text-primary break-all"
+          >
+            {resetLink}
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

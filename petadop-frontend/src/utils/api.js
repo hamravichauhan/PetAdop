@@ -6,7 +6,7 @@ import axios from "axios";
  * - In dev with Vite proxy:   VITE_API_BASE_URL = "/api"
  * - Without proxy (direct):   VITE_API_BASE_URL = "http://127.0.0.1:3000/api"
  *
- * In BOTH cases, always call api with paths like: api.get("/pets"), api.post("/chat/start")
+ * In BOTH cases, always call api with paths like: api.get("/pets"), api.post("/auth/login")
  * i.e., DO NOT prefix with /api in the call sites.
  */
 const RAW_BASE = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -18,9 +18,9 @@ const BASE =
     : RAW_BASE;
 
 const api = axios.create({
-  baseURL: BASE,                // e.g., "/api" or "http://127.0.0.1:3000/api"
-  withCredentials: true,        // OK even if you don't use cookie refresh
-  timeout: 20000,               // sane default
+  baseURL: BASE,          // e.g., "/api" or "http://127.0.0.1:3000/api"
+  withCredentials: true,  // OK even if you don't use cookie refresh
+  timeout: 20000,
 });
 
 /* ---------------- token helpers ---------------- */
@@ -36,6 +36,9 @@ function setToken(t) {
     delete api.defaults.headers.common.Authorization;
   }
 }
+function getRefreshToken() {
+  return localStorage.getItem("refreshToken");
+}
 
 // bootstrap header on load
 const boot = getToken();
@@ -50,40 +53,36 @@ api.interceptors.request.use((config) => {
   }
   // Normalize leading slashes to avoid accidental "//" or "/api/api"
   if (typeof config.url === "string") {
-    // If using an absolute URL for a one-off request, leave it as-is.
     const isAbsolute = /^https?:\/\//i.test(config.url);
     if (!isAbsolute) {
-      // Ensure single leading slash only
       config.url = config.url.startsWith("/") ? config.url : `/${config.url}`;
     }
   }
   return config;
 });
 
-/* ------------- response interceptor (401 refresh) ------------- */
-let refreshInFlight = null;
-
-// Build a refresh URL that works for BOTH base styles
-// If BASE is "/api"  → refreshUrl = "/auth/refresh"
-// If BASE is "http://..../api" → refreshUrl = "http://..../auth/refresh"
-function buildRefreshUrl() {
-  return `${BASE}/auth/refresh`;
-}
-
-// Keep auth endpoints detection independent of BASE to avoid mismatch.
-// We check the request path tail only, so it works for both "/api/..." and "http://.../api/..."
+/* ---------------- helpers for refresh ---------------- */
 function isAuthEndpointUrl(fullUrl = "") {
-  const u = fullUrl.toLowerCase();
+  // Works for relative or absolute URLs
+  const u = String(fullUrl).toLowerCase();
   return (
     u.endsWith("/auth/login") ||
     u.endsWith("/auth/register") ||
     u.endsWith("/auth/refresh") ||
     u.endsWith("/auth/logout") ||
-    // ✅ include password routes so refresh interceptor doesn't loop on them
     u.endsWith("/auth/password/forgot") ||
     u.endsWith("/auth/password/reset")
   );
 }
+
+// If BASE is "/api"           → "/api/auth/refresh"
+// If BASE is "http..../api"   → "http..../api/auth/refresh"
+function buildRefreshUrl() {
+  return `${BASE}/auth/refresh`;
+}
+
+/* ------------- response interceptor (401 refresh) ------------- */
+let refreshInFlight = null;
 
 api.interceptors.response.use(
   (res) => res,
@@ -91,7 +90,7 @@ api.interceptors.response.use(
     const { response, config } = error || {};
     if (!response || !config) return Promise.reject(error);
 
-    // If not a 401, already retried, or an auth endpoint → just fail
+    // If not a 401, already retried, or an auth endpoint → don't try to refresh
     if (response.status !== 401 || config.__isRetry || isAuthEndpointUrl(config.url)) {
       return Promise.reject(error);
     }
@@ -100,12 +99,16 @@ api.interceptors.response.use(
     if (!refreshInFlight) {
       refreshInFlight = (async () => {
         try {
-          // Use a *raw* axios call so we don't recurse through this interceptor
-          const refreshRes = await axios.post(
-            buildRefreshUrl(),
-            {},
-            { withCredentials: true, timeout: 15000 }
-          );
+          // IMPORTANT: your backend expects refreshToken in the body (unless cookie mode is on)
+          const refreshToken = getRefreshToken();
+          const body = refreshToken ? { refreshToken } : {};
+
+          // Use raw axios to avoid recursion through this interceptor
+          const refreshRes = await axios.post(buildRefreshUrl(), body, {
+            withCredentials: true,
+            timeout: 15000,
+          });
+
           const newToken =
             refreshRes.data?.accessToken ||
             refreshRes.data?.token ||
@@ -132,7 +135,7 @@ api.interceptors.response.use(
       config.headers = config.headers || {};
       if (t) config.headers.Authorization = `Bearer ${t}`;
 
-      // If config.url was relative, keep it; if absolute, leave it.
+      // Keep original URL (absolute or relative)
       return api(config);
     } catch {
       // Refresh failed → propagate original error
