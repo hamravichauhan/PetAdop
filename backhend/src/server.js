@@ -1,19 +1,12 @@
 // src/server.js
 import "dotenv/config";
 import http from "node:http";
+import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import { Server as SocketIOServer } from "socket.io";
 
 import connectDB from "./config/db.js";
 import app, { SOCKET_CORS as APP_SOCKET_CORS } from "./app.js";
-
-// chat persistence
-// import {
-//   createMessage,
-//   touchConversation,
-//   markRead,
-// } from "./controllers/chat.controller.js";
-// import Conversation from "./models/conversation.js"; // if you want membership enforcement
 
 /* ---------- Socket CORS ---------- */
 const devDefaults = ["http://localhost:5173", "http://127.0.0.1:5173"];
@@ -29,6 +22,15 @@ const FALLBACK_SOCKET_CORS = {
 
 const SOCKET_CORS = APP_SOCKET_CORS || FALLBACK_SOCKET_CORS;
 
+/* ---------- Required env sanity checks ---------- */
+function requireEnv(name) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing required env: ${name}`);
+  return v;
+}
+requireEnv("ACCESS_TOKEN_SECRET");
+requireEnv("MONGODB_URI");
+
 /* ---------- HTTP + Express ---------- */
 const server = http.createServer(app);
 server.keepAliveTimeout = 61_000; // keep-alive > 60s (proxy safe)
@@ -38,10 +40,10 @@ server.headersTimeout = 65_000;
 const io = new SocketIOServer(server, {
   cors: SOCKET_CORS,
   path: "/socket.io",
-  transports: ["websocket"], // dev: skip polling
+  transports: ["websocket", "polling"], // more robust for varied networks
 });
 
-// expose io globally to app if needed
+// expose io to app if you need it elsewhere
 app.set("io", io);
 
 /* ---------- Helpers ---------- */
@@ -69,7 +71,7 @@ io.use((socket, next) => {
     const cookieToken = readCookieToken(socket.handshake.headers);
 
     const token = authToken || headerToken || cookieToken;
-    if (!token) return next(new Error("No token provided"));
+    if (!token) return next(new Error("Unauthorized: no token"));
 
     const payload = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
     socket.user = {
@@ -78,15 +80,15 @@ io.use((socket, next) => {
       email: payload.email,
     };
     next();
-  } catch {
-    next(new Error("Unauthorized"));
+  } catch (e) {
+    next(new Error(`Unauthorized: ${e?.name || "invalid token"}`));
   }
 });
 
 /* ---------- Room Helper ---------- */
 const roomOf = (conversationId) => `conv:${conversationId}`;
 
-/* ---------- Chat Events ---------- */
+/* ---------- Chat Events (no persistence stub) ---------- */
 io.on("connection", (socket) => {
   const userId = socket.user?._id;
   if (!userId) return socket.disconnect(true);
@@ -96,7 +98,7 @@ io.on("connection", (socket) => {
 
   socket.on("chat:join", async ({ conversationId }) => {
     if (!conversationId) return;
-    // (optional) check membership here
+    // (optional) membership checks go here
     socket.join(roomOf(conversationId));
     socket.to(roomOf(conversationId)).emit("chat:presence", {
       conversationId,
@@ -118,22 +120,23 @@ io.on("connection", (socket) => {
     });
   });
 
+  // No-DB broadcast stub. Restore your persistence when controllers are ready.
   socket.on("chat:message", async (payload, ack) => {
     try {
       const { conversationId, text, attachments } = payload || {};
       if (!conversationId || (!text && !attachments?.length)) return;
 
-      const saved = await createMessage({
+      const msg = {
+        _id: (crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`),
         conversationId,
         sender: userId,
         text: text?.trim?.(),
-        attachments,
-      });
+        attachments: attachments || [],
+        createdAt: new Date().toISOString(),
+      };
 
-      await touchConversation(conversationId, saved);
-      io.to(roomOf(conversationId)).emit("chat:message", saved);
-
-      if (typeof ack === "function") ack(saved);
+      io.to(roomOf(conversationId)).emit("chat:message", msg);
+      if (typeof ack === "function") ack(msg);
     } catch (err) {
       console.error("chat:message error", err);
       if (typeof ack === "function") ack({ error: "send_failed" });
@@ -145,11 +148,6 @@ io.on("connection", (socket) => {
     try {
       if (!conversationId) return;
       const readAt = at ? new Date(at) : new Date();
-
-      if (typeof markRead === "function") {
-        await markRead(conversationId, userId, readAt);
-      }
-
       socket.to(roomOf(conversationId)).emit("chat:read", {
         conversationId,
         userId,
@@ -178,7 +176,10 @@ connectDB()
 /* ---------- Graceful Shutdown ---------- */
 function shutdown(sig) {
   console.log(`${sig} received. Shutting down...`);
-  server.close(() => process.exit(0));
+  // Close socket server first to stop new events
+  io.close(() => {
+    server.close(() => process.exit(0));
+  });
 }
 ["SIGINT", "SIGTERM"].forEach((s) => process.on(s, () => shutdown(s)));
 

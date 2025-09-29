@@ -288,10 +288,14 @@ export default function PetDetails() {
             {/* Trust badges */}
             <div className="mt-4 flex flex-wrap gap-2">
               {current.vaccinated && (
-                <TrustPill icon={Syringe} text="Vaccinated" />
+                <div className="bg-black text-white rounded-md px-2 py-1 flex items-center gap-1">
+                  <Syringe size={14} /> Vaccinated
+                </div>
               )}
               {current.sterilized && (
-                <TrustPill icon={ShieldCheck} text="Sterilized" />
+                <div className="bg-black text-white rounded-md px-2 py-1 flex items-center gap-1">
+                  <ShieldCheck size={14} /> Sterilized
+                </div>
               )}
             </div>
 

@@ -3,23 +3,23 @@ import axios from "axios";
 
 /**
  * Base URL strategy:
- * - In dev with Vite proxy:   VITE_API_BASE_URL = "/api"
- * - Without proxy (direct):   VITE_API_BASE_URL = "http://127.0.0.1:3000/api"
+ * - Dev with Vite proxy:  VITE_API_BASE_URL = "/api"
+ * - Direct to server:     VITE_API_BASE_URL = "http://127.0.0.1:3000/api"
  *
- * In BOTH cases, always call api with paths like: api.get("/pets"), api.post("/auth/login")
- * i.e., DO NOT prefix with /api in the call sites.
+ * Always call like: api.get("/pets"), api.post("/auth/login"), etc.
  */
-const RAW_BASE = import.meta.env.VITE_API_BASE_URL?.trim();
+const RAW_BASE = (import.meta.env.VITE_API_BASE_URL || "").trim();
 const BASE =
-  !RAW_BASE || RAW_BASE === ""
-    ? "/api" // safe default
+  RAW_BASE === ""
+    ? "/api"
     : RAW_BASE.endsWith("/")
-    ? RAW_BASE.slice(0, -1) // strip trailing slash
+    ? RAW_BASE.slice(0, -1)
     : RAW_BASE;
 
+// Axios instance for app API calls
 const api = axios.create({
-  baseURL: BASE,          // e.g., "/api" or "http://127.0.0.1:3000/api"
-  withCredentials: true,  // OK even if you don't use cookie refresh
+  baseURL: BASE,         // "/api" or "http://.../api"
+  withCredentials: true, // allows cookie-based auth if you use it
   timeout: 20000,
 });
 
@@ -39,49 +39,82 @@ function setToken(t) {
 function getRefreshToken() {
   return localStorage.getItem("refreshToken");
 }
+function setRefreshToken(rt) {
+  if (rt) localStorage.setItem("refreshToken", rt);
+  else localStorage.removeItem("refreshToken");
+}
 
 // bootstrap header on load
 const boot = getToken();
 if (boot) setToken(boot);
 
+/* ------------- small URL utilities ------------- */
+function toAbsoluteUrlMaybe(u) {
+  // If u is absolute, return as is; if relative, resolve against current origin
+  try {
+    const isAbs = /^https?:\/\//i.test(u);
+    return isAbs ? u : new URL(u, window.location.origin).toString();
+  } catch {
+    return u; // fallback, shouldn't happen
+  }
+}
+
+function cleanRelativeUrl(u) {
+  // Ensure a single leading slash for relative URLs (not affecting absolute URLs)
+  if (typeof u !== "string") return u;
+  if (/^https?:\/\//i.test(u)) return u; // absolute: leave as-is
+  return u.startsWith("/") ? u : `/${u}`;
+}
+
 /* ------------- request interceptor ------------- */
 api.interceptors.request.use((config) => {
+  // Attach bearer if present
   const token = getToken();
   if (token) {
     config.headers = config.headers || {};
     config.headers.Authorization = `Bearer ${token}`;
   }
-  // Normalize leading slashes to avoid accidental "//" or "/api/api"
+  // Normalize the path if it's relative (avoid "//" or double "/api")
   if (typeof config.url === "string") {
-    const isAbsolute = /^https?:\/\//i.test(config.url);
-    if (!isAbsolute) {
-      config.url = config.url.startsWith("/") ? config.url : `/${config.url}`;
-    }
+    config.url = cleanRelativeUrl(config.url);
   }
   return config;
 });
 
-/* ---------------- helpers for refresh ---------------- */
-function isAuthEndpointUrl(fullUrl = "") {
-  // Works for relative or absolute URLs
-  const u = String(fullUrl).toLowerCase();
+/* ------------- helpers for refresh ------------- */
+function pathnameOf(urlLike) {
+  try {
+    // Works for both absolute and relative URLs
+    const u = new URL(urlLike, window.location.origin);
+    return u.pathname.toLowerCase();
+  } catch {
+    // Best effort fallback
+    return String(urlLike || "").toLowerCase();
+  }
+}
+
+function isAuthEndpointUrl(urlLike) {
+  const p = pathnameOf(urlLike);
   return (
-    u.endsWith("/auth/login") ||
-    u.endsWith("/auth/register") ||
-    u.endsWith("/auth/refresh") ||
-    u.endsWith("/auth/logout") ||
-    u.endsWith("/auth/password/forgot") ||
-    u.endsWith("/auth/password/reset")
+    p.endsWith("/auth/login") ||
+    p.endsWith("/auth/register") ||
+    p.endsWith("/auth/refresh") ||
+    p.endsWith("/auth/logout") ||
+    p.endsWith("/auth/password/forgot") ||
+    p.endsWith("/auth/password/reset")
   );
 }
 
-// If BASE is "/api"           → "/api/auth/refresh"
-// If BASE is "http..../api"   → "http..../api/auth/refresh"
 function buildRefreshUrl() {
-  return `${BASE}/auth/refresh`;
+  // BASE may be relative or absolute; resolve properly
+  // We want "<BASE>/auth/refresh" without double slashes.
+  const base = BASE.endsWith("/") ? BASE.slice(0, -1) : BASE;
+  const rel = "/auth/refresh";
+  const full = `${base}${rel}`;
+  return toAbsoluteUrlMaybe(full);
 }
 
-/* ------------- response interceptor (401 refresh) ------------- */
+/* ------------- response interceptor (401 -> refresh) ------------- */
 let refreshInFlight = null;
 
 api.interceptors.response.use(
@@ -90,36 +123,48 @@ api.interceptors.response.use(
     const { response, config } = error || {};
     if (!response || !config) return Promise.reject(error);
 
-    // If not a 401, already retried, or an auth endpoint → don't try to refresh
+    // If not a 401, already retried, or it's an auth endpoint → do not refresh
     if (response.status !== 401 || config.__isRetry || isAuthEndpointUrl(config.url)) {
       return Promise.reject(error);
     }
 
-    // Start (or await) a single refresh request
+    // Start (or piggyback on) a single refresh request
     if (!refreshInFlight) {
       refreshInFlight = (async () => {
         try {
-          // IMPORTANT: your backend expects refreshToken in the body (unless cookie mode is on)
+          // If you use cookie-based refresh, body can be {}.
+          // If you store refresh token client-side, send it in the body.
           const refreshToken = getRefreshToken();
           const body = refreshToken ? { refreshToken } : {};
 
-          // Use raw axios to avoid recursion through this interceptor
+          // Use raw axios to avoid this interceptor recursion
           const refreshRes = await axios.post(buildRefreshUrl(), body, {
             withCredentials: true,
             timeout: 15000,
           });
 
-          const newToken =
+          // Accept common shapes
+          const newAccess =
             refreshRes.data?.accessToken ||
             refreshRes.data?.token ||
             refreshRes.data?.tokens?.accessToken ||
             null;
 
-          if (!newToken) throw new Error("No access token in refresh response");
-          setToken(newToken);
-          return newToken;
+          const newRefresh =
+            refreshRes.data?.refreshToken ||
+            refreshRes.data?.tokens?.refreshToken ||
+            null;
+
+          if (!newAccess) throw new Error("No access token in refresh response");
+
+          setToken(newAccess);
+          if (newRefresh) setRefreshToken(newRefresh);
+
+          return newAccess;
         } catch (e) {
+          // Refresh failed → clear tokens
           setToken(null);
+          setRefreshToken(null);
           throw e;
         } finally {
           refreshInFlight = null;
@@ -128,20 +173,38 @@ api.interceptors.response.use(
     }
 
     try {
-      await refreshInFlight; // wait for refresh to complete
-      // Retry original request once with fresh token
+      await refreshInFlight; // wait for refreshed token
+      // Retry the original request once
       const t = getToken();
       config.__isRetry = true;
       config.headers = config.headers || {};
       if (t) config.headers.Authorization = `Bearer ${t}`;
 
-      // Keep original URL (absolute or relative)
+      // Keep original absolute/relative URL exactly as it was
       return api(config);
     } catch {
-      // Refresh failed → propagate original error
+      // Propagate original error if refresh failed
       return Promise.reject(error);
     }
   }
 );
+
+/* ------------- optional exports for your store ------------- */
+/**
+ * Use after login:
+ *   setAuthTokens({ accessToken, refreshToken })
+ * or
+ *   setAuthTokens({ token })
+ */
+export function setAuthTokens({ accessToken, token, refreshToken } = {}) {
+  setToken(accessToken || token || null);
+  if (typeof refreshToken !== "undefined") setRefreshToken(refreshToken);
+}
+
+/** Use on logout */
+export function clearAuthTokens() {
+  setToken(null);
+  setRefreshToken(null);
+}
 
 export default api;
